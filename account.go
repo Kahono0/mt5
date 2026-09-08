@@ -94,6 +94,35 @@ type AccountInfo struct {
 	Underscore    [][]any
 }
 
+type AccountInfoHandler func(info *AccountInfo, msg Message) error
+
+func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler) {
+	if handler == nil {
+		return
+	}
+
+	c.RegisterHandler(CommandRequestAccount, func(msg Message) error {
+		info, err := DecodeAccountInfo(msg)
+		if err != nil {
+			return err
+		}
+		return handler(info, msg)
+	})
+}
+
+func DecodeAccountInfo(msg Message) (*AccountInfo, error) {
+	if msg.Command != CommandRequestAccount {
+		return nil, fmt.Errorf("unexpected command %d for account info", msg.Command)
+	}
+
+	info, err := ParseAccountInfo(msg.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode account info: %w", err)
+	}
+
+	return info, nil
+}
+
 func mapToAccountCore(values []any) (AccountCore, error) {
 	if len(values) != 26 {
 		return AccountCore{}, fmt.Errorf("expected 26 core account values, got %d", len(values))
