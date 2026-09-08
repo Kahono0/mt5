@@ -96,6 +96,18 @@ type AccountInfo struct {
 
 type AccountInfoHandler func(info *AccountInfo, msg Message) error
 
+// RequestAccountInfo sends a request for account information.
+// The client must be authenticated.
+func (c *AppClient) RequestAccountInfo() error {
+	if !c.IsAuthenticated() {
+		return ErrNotAuthenticated
+	}
+	if err := c.core.SendCommand(CommandRequestAccount, nil); err != nil {
+		return fmt.Errorf("failed to request account info: %w", err)
+	}
+	return nil
+}
+
 func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler) {
 	if handler == nil {
 		return
@@ -418,7 +430,6 @@ func parseUnderscore(buf []byte, offset *int, fields []ec.Field) ([][]any, error
 	if count < 0 {
 		return nil, fmt.Errorf("invalid underscore record count: %d", count)
 	}
-	fmt.Println("count is", count)
 	result := make([][]any, 0, count)
 	valueFields := []ec.Field{
 		{PropType: 6}, {PropType: 6}, {PropType: 8}, {PropType: 8},
@@ -489,7 +500,6 @@ func ParseAccountInfo(respBody []byte) (*AccountInfo, error) {
 	if info.Core.AuthPasswordMin == 0 {
 		info.Core.AuthPasswordMin = 8
 	}
-	fmt.Println("offset ", offset)
 	// Parse TradeSettings
 	if offset < len(respBody) {
 		count := int(readUint32(respBody, &offset))

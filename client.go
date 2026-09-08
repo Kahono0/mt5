@@ -414,6 +414,8 @@ func (c *Client) readLoop(ctx context.Context) error {
 			continue
 		}
 
+		fmt.Printf("Recieved msg Code %d Body %d bytes\n", msg.Command, len(msg.Body))
+
 		c.dispatch(msg)
 	}
 }

@@ -28,18 +28,6 @@ func (c *AppClient) Login() error {
 	return nil
 }
 
-// RequestAccountInfo sends a request for account information.
-// The client must be authenticated.
-func (c *AppClient) RequestAccountInfo() error {
-	if !c.IsAuthenticated() {
-		return ErrNotAuthenticated
-	}
-	if err := c.core.SendCommand(CommandRequestAccount, nil); err != nil {
-		return fmt.Errorf("failed to request account info: %w", err)
-	}
-	return nil
-}
-
 // RequestOpenPositions sends a request for open positions.
 // The client must be authenticated.
 func (c *AppClient) RequestOpenPositions() error {
