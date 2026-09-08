@@ -179,6 +179,10 @@ func seriesSize(fields []Field) (int, error) {
 	return size, nil
 }
 
+func GetSeriesSize(fields []Field) (int, error) {
+	return seriesSize(fields)
+}
+
 func toInt64(val interface{}) (int64, bool) {
 	switch v := val.(type) {
 	case int:
