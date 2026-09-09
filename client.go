@@ -120,9 +120,9 @@ type Client struct {
 	closed  bool
 	closeCh chan struct{}
 
-	handlersMu sync.RWMutex
-	handlers   map[uint16][]handlerEntry
-	onAny      []handlerEntry
+	handlersMu    sync.RWMutex
+	handlers      map[uint16][]handlerEntry
+	onAny         []handlerEntry
 	nextHandlerID uint64
 
 	msgCh chan Message
@@ -206,7 +206,7 @@ func (c *Client) Errors() <-chan error {
 func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
 	c.handlersMu.Lock()
 	defer c.handlersMu.Unlock()
-	
+
 	c.nextHandlerID++
 	id := c.nextHandlerID
 
@@ -216,7 +216,7 @@ func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOptio
 	}
 
 	c.handlers[command] = append(c.handlers[command], e)
-	
+
 	return func() {
 		c.handlersMu.Lock()
 		defer c.handlersMu.Unlock()
