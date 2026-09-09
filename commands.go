@@ -4,14 +4,14 @@ package mt5
 
 // Request commands
 const (
-	CommandRequestSessionKey uint16 = 0
-	CommandRequestAccount    uint16 = 3
-	CommandRequestPositions  uint16 = 4
-	CommandLoadHistory       uint16 = 5
-	CommandQuerySymbols      uint16 = 6
-	CommandSubscribeTicks    uint16 = 7
-	CommandLoadSymbols       uint16 = 18
-	CommandLogin             uint16 = 28
+	CommandRequestSessionKey  uint16 = 0
+	CommandRequestAccountInfo uint16 = 3
+	CommandRequestPositions   uint16 = 4
+	CommandLoadHistory        uint16 = 5
+	CommandQuerySymbols       uint16 = 6
+	CommandSubscribeTicks     uint16 = 7
+	CommandLoadSymbols        uint16 = 18
+	CommandLogin              uint16 = 28
 )
 
 const (

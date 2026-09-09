@@ -39,7 +39,7 @@ func TestDecodeTicksParsesSingleRecord(t *testing.T) {
 }
 
 func TestDecodeTicksRejectsWrongCommand(t *testing.T) {
-	_, err := DecodeTicks(Message{Command: CommandRequestAccount})
+	_, err := DecodeTicks(Message{Command: CommandRequestAccountInfo})
 	if err == nil {
 		t.Fatalf("expected command mismatch error")
 	}

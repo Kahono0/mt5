@@ -106,7 +106,7 @@ func (c *AppClient) RequestAccountInfo() error {
 	if !c.IsAuthenticated() {
 		return ErrNotAuthenticated
 	}
-	if err := c.core.SendCommand(CommandRequestAccount, nil); err != nil {
+	if err := c.core.SendCommand(CommandRequestAccountInfo, nil); err != nil {
 		return fmt.Errorf("failed to request account info: %w", err)
 	}
 	return nil
@@ -154,7 +154,7 @@ func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts 
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandRequestAccount, func(msg Message) error {
+	return c.RegisterHandler(CommandRequestAccountInfo, func(msg Message) error {
 		info, err := DecodeAccountInfo(msg)
 		if err != nil {
 			return err
@@ -165,8 +165,8 @@ func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts 
 }
 
 func DecodeAccountInfo(msg Message) (*AccountInfo, error) {
-	if msg.Command != CommandRequestAccount {
-		return nil, &CommandMismatchError{Expected: CommandRequestAccount, Got: msg.Command}
+	if msg.Command != CommandRequestAccountInfo {
+		return nil, &CommandMismatchError{Expected: CommandRequestAccountInfo, Got: msg.Command}
 	}
 
 	info, err := ParseAccountInfo(msg.Body)
