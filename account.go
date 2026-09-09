@@ -108,7 +108,10 @@ func (c *AppClient) RequestAccountInfo() error {
 	return nil
 }
 
-func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler) {
+// RegisterAccountInfoHandler registers a handler that receives decoded
+// account information. Use [WithErrorHandler] to route errors from this
+// handler to a dedicated callback.
+func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts ...HandlerOption) {
 	if handler == nil {
 		return
 	}
@@ -119,12 +122,12 @@ func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler) {
 			return err
 		}
 		return handler(info, msg)
-	})
+	}, opts...)
 }
 
 func DecodeAccountInfo(msg Message) (*AccountInfo, error) {
 	if msg.Command != CommandRequestAccount {
-		return nil, fmt.Errorf("unexpected command %d for account info", msg.Command)
+		return nil, &CommandMismatchError{Expected: CommandRequestAccount, Got: msg.Command}
 	}
 
 	info, err := ParseAccountInfo(msg.Body)

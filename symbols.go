@@ -36,7 +36,10 @@ func (c *AppClient) QuerySymbols() error {
 	return nil
 }
 
-func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler) {
+// RegisterQuerySymbolsHandler registers a handler that receives decoded
+// symbol data. Use [WithErrorHandler] to route errors from this handler
+// to a dedicated callback.
+func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler, opts ...HandlerOption) {
 	if handler == nil {
 		return
 	}
@@ -47,12 +50,12 @@ func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler) {
 			return err
 		}
 		return handler(info, msg)
-	})
+	}, opts...)
 }
 
 func DecodeSymbols(msg Message) (*SymbolList, error) {
 	if msg.Command != CommandQuerySymbols {
-		return nil, fmt.Errorf("unexpected command %d for QuerySymbolsHandler", msg.Command)
+		return nil, &CommandMismatchError{Expected: CommandQuerySymbols, Got: msg.Command}
 	}
 	body := msg.Body
 	const recordSize = 526

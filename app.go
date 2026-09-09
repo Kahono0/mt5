@@ -58,6 +58,10 @@ type AppConfig struct {
 	MessageBuffer int
 	// ErrorBuffer is the size of the error channel buffer.
 	ErrorBuffer int
+	// OnError is called for every error encountered during operation.
+	// Unlike the Errors channel, this callback is never lossy — it is
+	// always invoked regardless of channel buffer pressure.
+	OnError func(error)
 	// OnDisconnect is called when the connection drops.
 	OnDisconnect DisconnectFunc
 }
@@ -118,6 +122,7 @@ func NewApp(cfg AppConfig) (*AppClient, error) {
 		RequestKeyBody:       cfg.SessionKeyBody,
 		MessageBuffer:        cfg.MessageBuffer,
 		ErrorBuffer:          cfg.ErrorBuffer,
+		OnError:              cfg.OnError,
 	})
 	if err != nil {
 		return nil, err
@@ -170,15 +175,17 @@ func (c *AppClient) Errors() <-chan error {
 }
 
 // RegisterHandler registers a handler for a specific command ID on the
-// underlying [Client].
-func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler) {
-	c.core.On(command, handler)
+// underlying [Client]. Use [WithErrorHandler] to route errors from this
+// handler to a dedicated callback.
+func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) {
+	c.core.On(command, handler, opts...)
 }
 
 // RegisterAnyHandler registers a handler that is called for every
-// received message.
-func (c *AppClient) RegisterAnyHandler(handler MessageHandler) {
-	c.core.OnAny(handler)
+// received message. Use [WithErrorHandler] to route errors from this
+// handler to a dedicated callback.
+func (c *AppClient) RegisterAnyHandler(handler MessageHandler, opts ...HandlerOption) {
+	c.core.OnAny(handler, opts...)
 }
 
 // IsAuthenticated reports whether the client has completed the login
@@ -284,7 +291,11 @@ func (c *AppClient) extractSessionKey(msg Message) ([]byte, error) {
 
 func (c *AppClient) handleLoginAck(msg Message) error {
 	if msg.Code != 0 {
-		return fmt.Errorf("login rejected with code %d", msg.Code)
+		return &ServerError{
+			Command: msg.Command,
+			Code:    msg.Code,
+			Msg:     "login rejected",
+		}
 	}
 
 	c.mu.Lock()
@@ -295,7 +306,11 @@ func (c *AppClient) handleLoginAck(msg Message) error {
 
 func (c *AppClient) handleLoginSuccess(msg Message) error {
 	if msg.Code != 0 {
-		return fmt.Errorf("login success command failed with code %d", msg.Code)
+		return &ServerError{
+			Command: msg.Command,
+			Code:    msg.Code,
+			Msg:     "login success command failed",
+		}
 	}
 
 	c.mu.Lock()

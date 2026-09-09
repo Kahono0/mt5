@@ -2,7 +2,6 @@ package mt5
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 )
 
@@ -39,7 +38,7 @@ const tickRecordSize = 50
 // The message must have command [CommandTickUpdate].
 func DecodeTicks(msg Message) ([]Tick, error) {
 	if msg.Command != CommandTickUpdate {
-		return nil, fmt.Errorf("unexpected command %d for ticks", msg.Command)
+		return nil, &CommandMismatchError{Expected: CommandTickUpdate, Got: msg.Command}
 	}
 
 	body := msg.Body
@@ -75,8 +74,9 @@ func DecodeTicks(msg Message) ([]Tick, error) {
 }
 
 // RegisterTickHandler registers a handler that receives decoded [Tick]
-// data for [CommandTickUpdate] messages.
-func (c *AppClient) RegisterTickHandler(handler TickHandler) {
+// data for [CommandTickUpdate] messages. Use [WithErrorHandler] to
+// route errors from this handler to a dedicated callback.
+func (c *AppClient) RegisterTickHandler(handler TickHandler, opts ...HandlerOption) {
 	if handler == nil {
 		return
 	}
@@ -87,5 +87,5 @@ func (c *AppClient) RegisterTickHandler(handler TickHandler) {
 			return err
 		}
 		return handler(ticks, msg)
-	})
+	}, opts...)
 }

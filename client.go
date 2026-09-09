@@ -74,10 +74,33 @@ type Config struct {
 	// ErrorBuffer is the size of the error channel buffer.
 	// Defaults to 64.
 	ErrorBuffer int
+	// OnError is called for every error encountered during operation.
+	// Unlike the Errors channel, this callback is never lossy — it is
+	// always invoked regardless of channel buffer pressure.
+	OnError func(error)
 	// OnConnect is called after each successful connection.
 	OnConnect ConnectHook
 	// OnDisconnect is called when the connection drops.
 	OnDisconnect DisconnectHook
+}
+
+// handlerEntry pairs a message handler with an optional per-handler
+// error callback.
+type handlerEntry struct {
+	fn      MessageHandler
+	onError func(error)
+}
+
+// HandlerOption configures how a registered handler behaves.
+type HandlerOption func(*handlerEntry)
+
+// WithErrorHandler sets a per-handler error callback. When set, errors
+// returned by this handler are routed to fn instead of the global error
+// channel and [Config.OnError] callback.
+func WithErrorHandler(fn func(error)) HandlerOption {
+	return func(h *handlerEntry) {
+		h.onError = fn
+	}
 }
 
 // Client is a low-level WebSocket client for the MT5 binary protocol.
@@ -97,8 +120,8 @@ type Client struct {
 	closeCh chan struct{}
 
 	handlersMu sync.RWMutex
-	handlers   map[uint16][]MessageHandler
-	onAny      []MessageHandler
+	handlers   map[uint16][]handlerEntry
+	onAny      []handlerEntry
 
 	msgCh chan Message
 	errCh chan error
@@ -154,7 +177,7 @@ func New(config Config) (*Client, error) {
 	c := &Client{
 		cfg:      config,
 		closeCh:  make(chan struct{}),
-		handlers: make(map[uint16][]MessageHandler),
+		handlers: make(map[uint16][]handlerEntry),
 		msgCh:    make(chan Message, config.MessageBuffer),
 		errCh:    make(chan error, config.ErrorBuffer),
 	}
@@ -174,19 +197,30 @@ func (c *Client) Errors() <-chan error {
 }
 
 // On registers a handler for a specific command ID. Multiple handlers
-// can be registered for the same command.
-func (c *Client) On(command uint16, handler MessageHandler) {
+// can be registered for the same command. Use [WithErrorHandler] to
+// route errors from this handler to a dedicated callback instead of
+// the global error channel.
+func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOption) {
+	e := handlerEntry{fn: handler}
+	for _, o := range opts {
+		o(&e)
+	}
 	c.handlersMu.Lock()
 	defer c.handlersMu.Unlock()
-	c.handlers[command] = append(c.handlers[command], handler)
+	c.handlers[command] = append(c.handlers[command], e)
 }
 
 // OnAny registers a handler that is called for every received message,
-// regardless of command ID.
-func (c *Client) OnAny(handler MessageHandler) {
+// regardless of command ID. Use [WithErrorHandler] to route errors from
+// this handler to a dedicated callback instead of the global error channel.
+func (c *Client) OnAny(handler MessageHandler, opts ...HandlerOption) {
+	e := handlerEntry{fn: handler}
+	for _, o := range opts {
+		o(&e)
+	}
 	c.handlersMu.Lock()
 	defer c.handlersMu.Unlock()
-	c.onAny = append(c.onAny, handler)
+	c.onAny = append(c.onAny, e)
 }
 
 // Connect establishes a WebSocket connection to the server. If
@@ -441,19 +475,27 @@ func (c *Client) heartbeatLoop(done <-chan struct{}) {
 
 func (c *Client) dispatch(msg Message) {
 	c.handlersMu.RLock()
-	handlers := append([]MessageHandler{}, c.handlers[msg.Command]...)
-	onAny := append([]MessageHandler{}, c.onAny...)
+	handlers := append([]handlerEntry{}, c.handlers[msg.Command]...)
+	onAny := append([]handlerEntry{}, c.onAny...)
 	c.handlersMu.RUnlock()
 
 	for _, h := range handlers {
-		if err := h(msg); err != nil {
-			c.publishError(err)
+		if err := h.fn(msg); err != nil {
+			if h.onError != nil {
+				h.onError(err)
+			} else {
+				c.publishError(err)
+			}
 		}
 	}
 
 	for _, h := range onAny {
-		if err := h(msg); err != nil {
-			c.publishError(err)
+		if err := h.fn(msg); err != nil {
+			if h.onError != nil {
+				h.onError(err)
+			} else {
+				c.publishError(err)
+			}
 		}
 	}
 }
@@ -510,6 +552,10 @@ func (c *Client) closeConn() error {
 func (c *Client) publishError(err error) {
 	if err == nil {
 		return
+	}
+
+	if c.cfg.OnError != nil {
+		c.cfg.OnError(err)
 	}
 
 	select {
