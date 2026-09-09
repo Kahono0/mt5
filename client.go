@@ -87,6 +87,7 @@ type Config struct {
 // handlerEntry pairs a message handler with an optional per-handler
 // error callback.
 type handlerEntry struct {
+	id      uint64
 	fn      MessageHandler
 	onError func(error)
 }
@@ -122,6 +123,7 @@ type Client struct {
 	handlersMu sync.RWMutex
 	handlers   map[uint16][]handlerEntry
 	onAny      []handlerEntry
+	nextHandlerID uint64
 
 	msgCh chan Message
 	errCh chan error
@@ -199,28 +201,63 @@ func (c *Client) Errors() <-chan error {
 // On registers a handler for a specific command ID. Multiple handlers
 // can be registered for the same command. Use [WithErrorHandler] to
 // route errors from this handler to a dedicated callback instead of
-// the global error channel.
-func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOption) {
-	e := handlerEntry{fn: handler}
+// the global error channel. Returns a function that, when called,
+// removes the handler.
+func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
+	c.handlersMu.Lock()
+	defer c.handlersMu.Unlock()
+	
+	c.nextHandlerID++
+	id := c.nextHandlerID
+
+	e := handlerEntry{id: id, fn: handler}
 	for _, o := range opts {
 		o(&e)
 	}
-	c.handlersMu.Lock()
-	defer c.handlersMu.Unlock()
+
 	c.handlers[command] = append(c.handlers[command], e)
+	
+	return func() {
+		c.handlersMu.Lock()
+		defer c.handlersMu.Unlock()
+		handlers := c.handlers[command]
+		for i, h := range handlers {
+			if h.id == id {
+				c.handlers[command] = append(handlers[:i], handlers[i+1:]...)
+				break
+			}
+		}
+	}
 }
 
 // OnAny registers a handler that is called for every received message,
 // regardless of command ID. Use [WithErrorHandler] to route errors from
 // this handler to a dedicated callback instead of the global error channel.
-func (c *Client) OnAny(handler MessageHandler, opts ...HandlerOption) {
-	e := handlerEntry{fn: handler}
+// Returns a function that, when called, removes the handler.
+func (c *Client) OnAny(handler MessageHandler, opts ...HandlerOption) func() {
+	c.handlersMu.Lock()
+	defer c.handlersMu.Unlock()
+
+	c.nextHandlerID++
+	id := c.nextHandlerID
+
+	e := handlerEntry{id: id, fn: handler}
 	for _, o := range opts {
 		o(&e)
 	}
-	c.handlersMu.Lock()
-	defer c.handlersMu.Unlock()
+
 	c.onAny = append(c.onAny, e)
+
+	return func() {
+		c.handlersMu.Lock()
+		defer c.handlersMu.Unlock()
+		for i, h := range c.onAny {
+			if h.id == id {
+				c.onAny = append(c.onAny[:i], c.onAny[i+1:]...)
+				break
+			}
+		}
+	}
 }
 
 // Connect establishes a WebSocket connection to the server. If

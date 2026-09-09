@@ -77,13 +77,14 @@ func DecodeTicks(msg Message) ([]Tick, error) {
 
 // RegisterTickHandler registers a handler that receives decoded [Tick]
 // data for [CommandTickUpdate] messages. Use [WithErrorHandler] to
-// route errors from this handler to a dedicated callback.
-func (c *AppClient) RegisterTickHandler(handler TickHandler, opts ...HandlerOption) {
+// route errors from this handler to a dedicated callback. Returns a
+// function that, when called, removes the handler.
+func (c *AppClient) RegisterTickHandler(handler TickHandler, opts ...HandlerOption) func() {
 	if handler == nil {
-		return
+		return func() {}
 	}
 
-	c.RegisterHandler(CommandTickUpdate, func(msg Message) error {
+	return c.RegisterHandler(CommandTickUpdate, func(msg Message) error {
 		ticks, err := DecodeTicks(msg)
 		if err != nil {
 			return err

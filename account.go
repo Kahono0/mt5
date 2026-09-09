@@ -1,6 +1,7 @@
 package mt5
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -111,15 +112,49 @@ func (c *AppClient) RequestAccountInfo() error {
 	return nil
 }
 
-// RegisterAccountInfoHandler registers a handler that receives decoded
-// account information. Use [WithErrorHandler] to route errors from this
-// handler to a dedicated callback.
-func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts ...HandlerOption) {
-	if handler == nil {
-		return
+// GetAccountInfo sends a request for account information and blocks until
+// the response is received or the context is cancelled. This is a synchronous
+// wrapper around [RequestAccountInfo] and [RegisterAccountInfoHandler].
+func (c *AppClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error) {
+	if !c.IsAuthenticated() {
+		return nil, ErrNotAuthenticated
 	}
 
-	c.RegisterHandler(CommandRequestAccount, func(msg Message) error {
+	type result struct {
+		info *AccountInfo
+		err  error
+	}
+	ch := make(chan result, 1)
+
+	cancel := c.RegisterAccountInfoHandler(func(info *AccountInfo, msg Message) {
+		ch <- result{info, nil}
+	}, WithErrorHandler(func(err error) {
+		ch <- result{nil, err}
+	}))
+	defer cancel()
+
+	if err := c.RequestAccountInfo(); err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r := <-ch:
+		return r.info, r.err
+	}
+}
+
+// RegisterAccountInfoHandler registers a handler that receives decoded
+// account information. Use [WithErrorHandler] to route errors from this
+// handler to a dedicated callback. Returns a function that, when called,
+// removes the handler.
+func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts ...HandlerOption) func() {
+	if handler == nil {
+		return func() {}
+	}
+
+	return c.RegisterHandler(CommandRequestAccount, func(msg Message) error {
 		info, err := DecodeAccountInfo(msg)
 		if err != nil {
 			return err

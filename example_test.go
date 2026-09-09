@@ -48,6 +48,15 @@ func ExampleNewApp() {
 	}()
 
 	_ = client.WaitUntilAuthenticated(ctx)
+
+	// Request account info synchronously
+	accountInfo, err := client.GetAccountInfo(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Account info: %s", accountInfo.Core.AccountName)
+
 	_ = client.SubscribeTicks([]uint32{1001, 1002})
 	_ = client.RequestAccountInfo()
 	_ = client.Close()

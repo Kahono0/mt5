@@ -176,16 +176,18 @@ func (c *AppClient) Errors() <-chan error {
 
 // RegisterHandler registers a handler for a specific command ID on the
 // underlying [Client]. Use [WithErrorHandler] to route errors from this
-// handler to a dedicated callback.
-func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) {
-	c.core.On(command, handler, opts...)
+// handler to a dedicated callback. Returns a function that, when called,
+// removes the handler.
+func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
+	return c.core.On(command, handler, opts...)
 }
 
 // RegisterAnyHandler registers a handler that is called for every
 // received message. Use [WithErrorHandler] to route errors from this
-// handler to a dedicated callback.
-func (c *AppClient) RegisterAnyHandler(handler MessageHandler, opts ...HandlerOption) {
-	c.core.OnAny(handler, opts...)
+// handler to a dedicated callback. Returns a function that, when called,
+// removes the handler.
+func (c *AppClient) RegisterAnyHandler(handler MessageHandler, opts ...HandlerOption) func() {
+	return c.core.OnAny(handler, opts...)
 }
 
 // IsAuthenticated reports whether the client has completed the login
