@@ -21,7 +21,10 @@ type SymbolList struct {
 	Symbols []Symbol
 }
 
-type QuerySymbolsHandler func(symbols *SymbolList, msg Message) error
+// QuerySymbolsHandler is a function that processes decoded symbol data.
+// Handle errors within the callback; only framework-level decode
+// errors are routed to [Config.OnError] and the error channel.
+type QuerySymbolsHandler func(symbols *SymbolList, msg Message)
 
 // QuerySymbols sends a request for all symbols
 // The client must be authenticated
@@ -49,7 +52,8 @@ func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler, opt
 		if err != nil {
 			return err
 		}
-		return handler(info, msg)
+		handler(info, msg)
+		return nil
 	}, opts...)
 }
 

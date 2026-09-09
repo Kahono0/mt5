@@ -17,16 +17,25 @@ func ExampleNewApp() {
 		DeviceID:             "device-id",
 		PingInterval:         5 * time.Second,
 		ReconnectMaxAttempts: -1,
+		OnError: func(err error) {
+			switch err := err.(type) {
+			case *mt5.ServerError:
+				log.Printf("server error: cmd=%d code=%d msg=%s", err.Command, err.Code, err.Msg)
+			case *mt5.CommandMismatchError:
+				log.Printf("command mismatch: expected=%d got=%d", err.Expected, err.Got)
+			default:
+				log.Printf("error: %v", err)
+			}
+		},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	client.RegisterTickHandler(func(ticks []mt5.Tick, msg mt5.Message) error {
+	client.RegisterTickHandler(func(ticks []mt5.Tick, msg mt5.Message) {
 		for _, tick := range ticks {
 			log.Printf("tick: symbol=%d bid=%.5f ask=%.5f", tick.SymbolID, tick.Bid, tick.Ask)
 		}
-		return nil
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

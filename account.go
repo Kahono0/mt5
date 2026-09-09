@@ -94,7 +94,10 @@ type AccountInfo struct {
 	Underscore    [][]any
 }
 
-type AccountInfoHandler func(info *AccountInfo, msg Message) error
+// AccountInfoHandler is a function that processes decoded account data.
+// Handle errors within the callback; only framework-level decode
+// errors are routed to [Config.OnError] and the error channel.
+type AccountInfoHandler func(info *AccountInfo, msg Message)
 
 // RequestAccountInfo sends a request for account information.
 // The client must be authenticated.
@@ -121,7 +124,8 @@ func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts 
 		if err != nil {
 			return err
 		}
-		return handler(info, msg)
+		handler(info, msg)
+		return nil
 	}, opts...)
 }
 

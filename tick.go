@@ -30,7 +30,9 @@ type Tick struct {
 }
 
 // TickHandler is a function that processes decoded tick data.
-type TickHandler func(ticks []Tick, msg Message) error
+// Handle errors within the callback; only framework-level decode
+// errors are routed to [Config.OnError] and the error channel.
+type TickHandler func(ticks []Tick, msg Message)
 
 const tickRecordSize = 50
 
@@ -86,6 +88,7 @@ func (c *AppClient) RegisterTickHandler(handler TickHandler, opts ...HandlerOpti
 		if err != nil {
 			return err
 		}
-		return handler(ticks, msg)
+		handler(ticks, msg)
+		return nil
 	}, opts...)
 }
