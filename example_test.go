@@ -14,7 +14,7 @@ func ExampleNewApp() {
 		ServerURL:            "broker.example",
 		AccountID:            123456,
 		Password:             "secret",
-		DeviceID:             "device-id",
+		DeviceID:             "device-id", // format Linux x86_64;1;en-US;1920x1080;705818
 		PingInterval:         5 * time.Second,
 		ReconnectMaxAttempts: -1,
 		OnError: func(err error) {
