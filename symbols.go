@@ -48,11 +48,7 @@ func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler, opt
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandQuerySymbols, func(msg Message) error {
-		info, err := DecodeSymbols(msg)
-		if err != nil {
-			return err
-		}
+	return c.OnT(SymbolsResponse, func(info *SymbolList, msg Message) error {
 		handler(info, msg)
 		return nil
 	}, opts...)

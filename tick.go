@@ -84,11 +84,7 @@ func (c *AppClient) RegisterTickHandler(handler TickHandler, opts ...HandlerOpti
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandTickUpdate, func(msg Message) error {
-		ticks, err := DecodeTicks(msg)
-		if err != nil {
-			return err
-		}
+	return c.OnT(TickUpdate, func(ticks []Tick, msg Message) error {
 		handler(ticks, msg)
 		return nil
 	}, opts...)

@@ -44,11 +44,7 @@ func (c *AppClient) RegisterPositionsHandler(handler PositionsHandler) {
 		return
 	}
 
-	c.RegisterHandler(CommandRequestPositions, func(msg Message) error {
-		positions, err := DecodePositions(msg)
-		if err != nil {
-			return err
-		}
+	c.OnT(Positions, func(positions []Position, msg Message) error {
 		return handler(positions, msg)
 	})
 }

@@ -154,11 +154,7 @@ func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts 
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandRequestAccountInfo, func(msg Message) error {
-		info, err := DecodeAccountInfo(msg)
-		if err != nil {
-			return err
-		}
+	return c.OnT(AccountInfoResponse, func(info *AccountInfo, msg Message) error {
 		handler(info, msg)
 		return nil
 	}, opts...)

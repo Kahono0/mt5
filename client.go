@@ -27,6 +27,36 @@ type Message struct {
 // MessageHandler is a function that processes a received [Message].
 type MessageHandler func(Message) error
 
+// DecodedHandler processes a decoded message value and its original message.
+// Returning an error routes it through the registration's error handling.
+type DecodedHandler[T any] func(value T, msg Message) error
+
+// HandlerRegistrar is implemented by [Client] and [AppClient]. It is the
+// common low-level registration API used by [On].
+type HandlerRegistrar interface {
+	RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) func()
+}
+
+// On registers a type-safe handler for a decoded command. The command's type
+// determines the type accepted by handler, so a handler for one command's
+// payload cannot be registered for another command's descriptor.
+//
+// The raw [Client.On] and [Client.OnAny] methods remain available when the
+// un-decoded message is required.
+func (c *Client) OnT[T any](command Command[T], handler DecodedHandler[T], opts ...HandlerOption) func() {
+	if handler == nil {
+		return func() {}
+	}
+
+	return c.RegisterHandler(command.ID, func(msg Message) error {
+		value, err := command.Decode(msg)
+		if err != nil {
+			return err
+		}
+		return handler(value, msg)
+	}, opts...)
+}
+
 // ConnectHook is called after a successful connection. The reconnect
 // parameter is true for all connections after the first.
 type ConnectHook func(client *Client, reconnect bool) error
@@ -228,6 +258,13 @@ func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOptio
 			}
 		}
 	}
+}
+
+// RegisterHandler registers a raw-message handler. It is an alias for [On]
+// that lets Client satisfy [HandlerRegistrar]. Prefer the package-level [On]
+// function when a decoder is available.
+func (c *Client) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
+	return c.On(command, handler, opts...)
 }
 
 // OnAny registers a handler that is called for every received message,

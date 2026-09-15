@@ -182,6 +182,11 @@ func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts
 	return c.core.On(command, handler, opts...)
 }
 
+
+func (c *AppClient) OnT[T any](command Command[T], handler DecodedHandler[T], opts ...HandlerOption) func() {
+	return c.core.OnT(command, handler, opts...)
+}
+
 // RegisterAnyHandler registers a handler that is called for every
 // received message. Use [WithErrorHandler] to route errors from this
 // handler to a dedicated callback. Returns a function that, when called,
