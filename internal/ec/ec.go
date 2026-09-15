@@ -8,11 +8,13 @@ import (
 	"unicode/utf16"
 )
 
-// Field describes a single typed value in a binary serialization sequence.
+// Field mirrors a JS field: [propType, propValue, propLength, propLengthType]
 type Field struct {
-	PropType   int
-	PropValue  interface{}
-	PropLength int
+	PropType       int
+	PropValue      interface{}
+	PropLength     int
+	PropLengthType int
+	Parser         func([]byte, int) (interface{}, error) // optional custom parser for PropType 12
 }
 
 // Serialize encodes a sequence of fields into a binary byte slice.
@@ -181,6 +183,123 @@ func seriesSize(fields []Field) (int, error) {
 
 func GetSeriesSize(fields []Field) (int, error) {
 	return seriesSize(fields)
+}
+
+// Parse parses a byte buffer according to field definitions
+func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
+	out := make([]interface{}, len(fields))
+
+	for i, f := range fields {
+		switch f.PropType {
+		case 1:
+			out[i] = int8(buf[offset])
+			offset += 1
+		case 2:
+			out[i] = int16(binary.LittleEndian.Uint16(buf[offset:]))
+			offset += 2
+		case 3:
+			out[i] = int32(binary.LittleEndian.Uint32(buf[offset:]))
+			offset += 4
+		case 4:
+			out[i] = buf[offset]
+			offset += 1
+		case 5:
+			out[i] = binary.LittleEndian.Uint16(buf[offset:])
+			offset += 2
+		case 6:
+			out[i] = binary.LittleEndian.Uint32(buf[offset:])
+			offset += 4
+		case 7:
+			out[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[offset:]))
+			offset += 4
+		case 8:
+			out[i] = math.Float64frombits(binary.LittleEndian.Uint64(buf[offset:]))
+			offset += 8
+		case 10:
+			length := f.PropLength
+			if length == 0 {
+				length = len(f.PropValue.(string))
+			}
+			out[i] = getCharString(buf[offset : offset+length])
+			offset += length
+		case 11:
+			length := f.PropLength
+			if length == 0 {
+				length = len(f.PropValue.(string)) * 2
+			}
+			out[i] = parseUTF16(buf[offset : offset+length])
+			offset += length
+		case 12:
+			// Determine the length
+			length := f.PropLength
+			if f.PropLengthType != 0 {
+				switch f.PropLengthType {
+				case 4:
+					length = int(buf[offset])
+					offset += 1
+				case 5:
+					length = int(binary.LittleEndian.Uint16(buf[offset:]))
+					offset += 2
+				case 6:
+					length = int(binary.LittleEndian.Uint32(buf[offset:]))
+					offset += 4
+				default:
+					return nil, errors.New("unsupported PropLengthType")
+				}
+			}
+
+			// Check buffer bounds
+			if offset+length > len(buf) {
+				return nil, fmt.Errorf("buffer too short for PropType 12, need %d bytes, got %d", length, len(buf)-offset)
+			}
+
+			// Use field parser if provided
+			if f.Parser != nil {
+				val, err := f.Parser(buf[offset:offset+length], 0)
+				if err != nil {
+					return nil, fmt.Errorf("PropType 12 parser error: %w", err)
+				}
+				out[i] = val
+			} else {
+				// fallback: raw bytes
+				out[i] = buf[offset : offset+length]
+			}
+
+			offset += length
+		case 17:
+			out[i] = int64(binary.LittleEndian.Uint64(buf[offset:]))
+			offset += 8
+		case 18:
+			out[i] = binary.LittleEndian.Uint64(buf[offset:])
+			offset += 8
+		default:
+			return nil, errors.New("unsupported PropType")
+		}
+	}
+
+	return out, nil
+}
+
+// parseUTF16 converts little-endian UTF-16 bytes to string, stops at first null
+func parseUTF16(buf []byte) string {
+	runes := []rune{}
+	for i := 0; i+1 < len(buf); i += 2 {
+		code := binary.LittleEndian.Uint16(buf[i:])
+		if code == 0 {
+			break
+		}
+		runes = append(runes, rune(code))
+	}
+	return string(runes)
+}
+
+// getCharString reads ASCII / byte string and trims trailing zero bytes
+func getCharString(buf []byte) string {
+	i := len(buf)
+	for i > 0 && buf[i-1] == 0 {
+		i--
+	}
+	return string(buf[:i])
 }
 
 func toInt64(val interface{}) (int64, bool) {
