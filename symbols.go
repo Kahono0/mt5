@@ -43,7 +43,10 @@ func (c *AppClient) QuerySymbols() error {
 // symbol data. Use [WithErrorHandler] to route errors from this handler
 // to a dedicated callback. Returns a function that, when called, removes
 // the handler.
-func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler, opts ...HandlerOption) func() {
+func (c *AppClient) RegisterQuerySymbolsHandler(
+	handler QuerySymbolsHandler,
+	opts ...HandlerOption,
+) func() {
 	if handler == nil {
 		return func() {}
 	}

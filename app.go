@@ -178,7 +178,11 @@ func (c *AppClient) Errors() <-chan error {
 // underlying [Client]. Use [WithErrorHandler] to route errors from this
 // handler to a dedicated callback. Returns a function that, when called,
 // removes the handler.
-func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
+func (c *AppClient) RegisterHandler(
+	command uint16,
+	handler MessageHandler,
+	opts ...HandlerOption,
+) func() {
 	return c.core.On(command, handler, opts...)
 }
 
@@ -285,7 +289,12 @@ func (c *AppClient) extractSessionKey(msg Message) ([]byte, error) {
 	}
 
 	if c.cfg.SessionKeyOffset < 0 || c.cfg.SessionKeyOffset >= len(msg.Body) {
-		return nil, fmt.Errorf("%w: body length %d with offset %d", ErrSessionKeyNotLoaded, len(msg.Body), c.cfg.SessionKeyOffset)
+		return nil, fmt.Errorf(
+			"%w: body length %d with offset %d",
+			ErrSessionKeyNotLoaded,
+			len(msg.Body),
+			c.cfg.SessionKeyOffset,
+		)
 	}
 
 	return append([]byte(nil), msg.Body[c.cfg.SessionKeyOffset:]...), nil

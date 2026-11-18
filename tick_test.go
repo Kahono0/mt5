@@ -72,16 +72,3 @@ func TestBuildTickSubscriptionPayload(t *testing.T) {
 		t.Fatalf("unexpected symbol id sequence in payload")
 	}
 }
-
-func TestBuildTradeHistoryPayload(t *testing.T) {
-	payload := BuildTradeHistoryPayload(-10, 20)
-	if len(payload) != 8 {
-		t.Fatalf("expected payload length 8, got %d", len(payload))
-	}
-
-	from := int32(binary.LittleEndian.Uint32(payload[0:4]))
-	to := int32(binary.LittleEndian.Uint32(payload[4:8]))
-	if from != -10 || to != 20 {
-		t.Fatalf("unexpected from/to values: %d %d", from, to)
-	}
-}

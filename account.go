@@ -3,7 +3,6 @@ package mt5
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 
@@ -15,8 +14,8 @@ import (
 // --- AccountTradeSettings struct ---
 type AccountTradeSettings struct {
 	SymbolPath             string
-	SpreadDiff             int32
-	SpreadDiffBalance      int32
+	SpreadDiff             uint32
+	SpreadDiffBalance      uint32
 	TradeMode              uint32
 	TradeStopsLevel        int32
 	TradeFreezeLevel       int32
@@ -211,178 +210,24 @@ func mapToAccountCore(values []any) (AccountCore, error) {
 	}, nil
 }
 
-// --- Helper functions ---
-func readUint32(buf []byte, offset *int) uint32 {
-	v := binary.LittleEndian.Uint32(buf[*offset:])
-	*offset += 4
-	return v
-}
-
-func readInt32(buf []byte, offset *int) int32 {
-	v := int32(binary.LittleEndian.Uint32(buf[*offset:]))
-	*offset += 4
-	return v
-}
-
-func readBigUint64(buf []byte, offset *int) uint64 {
-	v := binary.LittleEndian.Uint64(buf[*offset:])
-	*offset += 8
-	return v
-}
-
-func readFloat64(buf []byte, offset *int) float64 {
-	v := math.Float64frombits(binary.LittleEndian.Uint64(buf[*offset:]))
-	*offset += 8
-	return v
-}
-
-func parseUTF16(buf []byte, offset *int, length int) string {
-	runes := []rune{}
-	for i := 0; i < length; i += 2 {
-		if *offset+i+1 >= len(buf) {
-			break
-		}
-		val := binary.LittleEndian.Uint16(buf[*offset+i:])
-		if val == 0 {
-			break
-		}
-		runes = append(runes, rune(val))
+func parseFloat64ArrayWithOffset(b []byte, offset int) (interface{}, error) {
+	if offset < 0 || offset >= len(b) {
+		return nil, fmt.Errorf("offset %d out of bounds for byte slice of length %d", offset, len(b))
 	}
-	*offset += length
-	return string(runes)
-}
-
-// --- Generic parser for fields ---
-func parseFields(buf []byte, offset *int, fields []ec.Field) ([]any, error) {
-	out := make([]any, len(fields))
-
-	for i, f := range fields {
-		switch f.PropType {
-		case 1: // int8
-			if *offset+1 > len(buf) {
-				out[i] = int8(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = int8(buf[*offset])
-			*offset += 1
-
-		case 4: // uint8
-			if *offset+1 > len(buf) {
-				out[i] = uint8(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = uint8(buf[*offset])
-			*offset += 1
-
-		case 2: // int16
-			if *offset+2 > len(buf) {
-				out[i] = int16(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = int16(binary.LittleEndian.Uint16(buf[*offset:]))
-			*offset += 2
-
-		case 5: // uint16
-			if *offset+2 > len(buf) {
-				out[i] = uint16(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = uint16(binary.LittleEndian.Uint16(buf[*offset:]))
-			*offset += 2
-
-		case 3: // int32
-			if *offset+4 > len(buf) {
-				out[i] = int32(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = int32(binary.LittleEndian.Uint32(buf[*offset:]))
-			*offset += 4
-
-		case 6: // uint32
-			if *offset+4 > len(buf) {
-				out[i] = uint32(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = binary.LittleEndian.Uint32(buf[*offset:])
-			*offset += 4
-
-		case 8: // float64
-			if *offset+8 > len(buf) {
-				out[i] = float64(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = readFloat64(buf, offset)
-
-		case 11: // UTF-16 string
-			length := f.PropLength
-			if length == 0 {
-				length = len(buf) - *offset
-			}
-			if *offset+length > len(buf) {
-				length = len(buf) - *offset
-			}
-			out[i] = parseUTF16(buf, offset, length)
-
-		case 12: // ArrayBuffer → Float64Array
-			length := f.PropLength
-			if length == 0 {
-				return nil, errors.New("propLength required for PropType 12")
-			}
-			remaining := len(buf) - *offset
-			if remaining < length {
-				length = remaining
-			}
-			out[i] = parseFloat64Array(buf[*offset : *offset+length])
-			*offset += length
-
-		case 17: // int64
-			if *offset+8 > len(buf) {
-				out[i] = int64(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = int64(binary.LittleEndian.Uint64(buf[*offset:]))
-			*offset += 8
-
-		case 18: // uint64
-			if *offset+8 > len(buf) {
-				out[i] = uint64(0)
-				*offset = len(buf)
-				continue
-			}
-			out[i] = readBigUint64(buf, offset)
-
-		default:
-			return nil, fmt.Errorf("unsupported PropType: %d", f.PropType)
-		}
-	}
-
-	return out, nil
-}
-
-// parseFloat64Array converts a []byte slice to a slice of float64
-func parseFloat64Array(b []byte) []float64 {
-	n := len(b) / 8
+	n := (len(b) - offset) / 8
 	out := make([]float64, n)
 	for i := range n {
-		out[i] = math.Float64frombits(binary.LittleEndian.Uint64(b[i*8:]))
+		out[i] = math.Float64frombits(binary.LittleEndian.Uint64(b[offset+i*8:]))
 	}
-	return out
+	return out, nil
 }
 
 // --- Map parsed values to AccountTradeSettings ---
 func mapToTradeSettings(values []any) AccountTradeSettings {
 	return AccountTradeSettings{
 		SymbolPath:             values[0].(string),
-		SpreadDiff:             values[1].(int32),
-		SpreadDiffBalance:      values[2].(int32),
+		SpreadDiff:             values[1].(uint32),
+		SpreadDiffBalance:      values[2].(uint32),
 		TradeMode:              values[3].(uint32),
 		TradeStopsLevel:        values[4].(int32),
 		TradeFreezeLevel:       values[5].(int32),
@@ -421,108 +266,81 @@ func mapToTradeSettings(values []any) AccountTradeSettings {
 	}
 }
 
-func parseH(buf []byte, offset *int, fields []ec.Field) ([][]any, error) {
-	if len(buf) <= *offset {
-		return nil, nil
-	}
-	count := int(readInt32(buf, offset))
-	if count == -1 {
-		return [][]any{}, nil
-	}
-	if count < 0 {
-		return nil, fmt.Errorf("invalid H record count: %d", count)
-	}
-	result := make([][]any, 0, count)
-	valueFields := []ec.Field{
-		{PropType: 8}, {PropType: 8}, {PropType: 8}, {PropType: 8},
-	}
-	for range count {
-		values, err := parseFields(buf, offset, fields)
-		if err != nil {
-			return nil, err
-		}
-		nestedCount := int(values[4].(int32))
-		if nestedCount == -1 {
-			nestedCount = 0
-		}
-		if nestedCount < 0 {
-			return nil, fmt.Errorf("invalid H nested record count: %d", nestedCount)
-		}
-		nested := make([][]any, 0, nestedCount)
-		for j := 0; j < nestedCount; j++ {
-			value, err := parseFields(buf, offset, valueFields)
-			if err != nil {
-				return nil, err
-			}
-			nested = append(nested, value)
-		}
-		result = append(result, append(values, nested))
-	}
-	return result, nil
-}
-
-func parseUnderscore(buf []byte, offset *int, fields []ec.Field) ([][]any, error) {
-	if len(buf) <= *offset {
-		return nil, nil
-	}
-	count := int(readInt32(buf, offset))
-	if count == -1 {
-		return [][]any{}, nil
-	}
-	if count < 0 {
-		return nil, fmt.Errorf("invalid underscore record count: %d", count)
-	}
-	result := make([][]any, 0, count)
-	valueFields := []ec.Field{
-		{PropType: 6}, {PropType: 6}, {PropType: 8}, {PropType: 8},
-		{PropType: 8}, {PropType: 8}, {PropType: 8}, {PropType: 11, PropLength: 32},
-	}
-	for range count {
-		values, err := parseFields(buf, offset, fields)
-		if err != nil {
-			return nil, err
-		}
-		nestedCount := int(readUint32(buf, offset))
-		nested := make([][]any, 0, nestedCount)
-		for range nestedCount {
-			value, err := parseFields(buf, offset, valueFields)
-			if err != nil {
-				return nil, err
-			}
-			nested = append(nested, value)
-		}
-		result = append(result, append(values, nested))
-	}
-	return result, nil
-}
-
 func ParseAccountInfo(respBody []byte) (*AccountInfo, error) {
 	offset := 0
 
 	// Define your fields and series sizes
 	vl := []ec.Field{
 		{PropType: 4}, {PropType: 3}, {PropType: 3}, {PropType: 8}, {PropType: 8},
-		{PropType: 11, PropLength: 64}, {PropType: 6}, {PropType: 6}, {PropType: 11, PropLength: 256},
+		{
+			PropType:   11,
+			PropLength: 64,
+		}, {PropType: 6}, {PropType: 6}, {PropType: 11, PropLength: 256},
 		{PropType: 5}, {PropType: 11, PropLength: 128}, {PropType: 11, PropLength: 256},
 		{PropType: 3}, {PropType: 1}, {PropType: 6}, {PropType: 6}, {PropType: 8}, {PropType: 8},
 		{PropType: 6}, {PropType: 8}, {PropType: 6}, {PropType: 8}, {PropType: 8}, {PropType: 8},
 		{PropType: 6}, {PropType: 6},
 	}
 	accountTradeSettingsFields := []ec.Field{
-		{PropType: 11, PropLength: 256}, {PropType: 3}, {PropType: 3}, {PropType: 6},
-		{PropType: 3}, {PropType: 3}, {PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 6},
-		{PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 6},
-		{PropType: 18}, {PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 18}, {PropType: 18},
-		{PropType: 18}, {PropType: 18}, {PropType: 6}, {PropType: 8}, {PropType: 8},
-		{PropType: 12, PropLength: 64}, {PropType: 12, PropLength: 64}, {PropType: 8}, {PropType: 8},
-		{PropType: 8}, {PropType: 6}, {PropType: 8}, {PropType: 8}, {PropType: 3}, {PropType: 6}, {PropType: 6},
+		{PropType: 11, PropLength: 256},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 3},
+		{PropType: 3},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 18},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 6},
+		{PropType: 18},
+		{PropType: 18},
+		{PropType: 18},
+		{PropType: 18},
+		{PropType: 6},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 12, PropLength: 64, Parser: parseFloat64ArrayWithOffset},
+		{PropType: 12, PropLength: 64, Parser: parseFloat64ArrayWithOffset},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 6},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 3},
+		{PropType: 6},
+		{PropType: 6},
+
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 8},
+		{PropType: 8},
 	}
 	gl := []ec.Field{
-		{PropType: 11, PropLength: 256}, {PropType: 6}, {PropType: 11, PropLength: 32}, {PropType: 6}, {PropType: 3},
+		{
+			PropType:   11,
+			PropLength: 256,
+		}, {PropType: 6}, {PropType: 11, PropLength: 32}, {PropType: 6}, {PropType: 3},
 	}
 
 	_l := []ec.Field{
-		{PropType: 11, PropLength: 256}, {PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 11, PropLength: 32}, {PropType: 6},
+		{
+			PropType:   11,
+			PropLength: 256,
+		}, {PropType: 6}, {PropType: 6}, {PropType: 6}, {PropType: 11, PropLength: 32}, {PropType: 6},
 	}
 
 	_ = gl
@@ -531,10 +349,16 @@ func ParseAccountInfo(respBody []byte) (*AccountInfo, error) {
 	info := &AccountInfo{}
 
 	// Parse Core Values
-	core, err := parseFields(respBody, &offset, vl)
+	core, err := ec.Parse(respBody, vl, offset)
 	if err != nil {
 		return nil, err
 	}
+	s, err := ec.GetSeriesSize(vl)
+	if err != nil {
+		return nil, err
+	}
+
+	offset += s
 	info.Core, err = mapToAccountCore(core)
 	if err != nil {
 		return nil, err
@@ -542,32 +366,40 @@ func ParseAccountInfo(respBody []byte) (*AccountInfo, error) {
 	if info.Core.AuthPasswordMin == 0 {
 		info.Core.AuthPasswordMin = 8
 	}
+	s, err = ec.GetSeriesSize(accountTradeSettingsFields)
+	if err != nil {
+		return nil, err
+	}
 	// Parse TradeSettings
 	if offset < len(respBody) {
-		count := int(readUint32(respBody, &offset))
+		count := binary.LittleEndian.Uint32(respBody[offset:])
+		offset += 4
 		info.TradeSettings = make([]AccountTradeSettings, 0, count)
 
 		for i := range count {
-			v, err := parseFields(respBody, &offset, accountTradeSettingsFields)
+			v, err := ec.Parse(respBody, accountTradeSettingsFields, offset)
 			if err != nil {
 				return nil, err
 			}
-			if i == 0 {
+			offset += s
+			if i >= 0 {
 				info.TradeSettings = append(info.TradeSettings, mapToTradeSettings(v))
 			}
-
 		}
 	}
 
 	// Parse remaining values
 	if offset < len(respBody) {
-		info.ValueO = readInt32(respBody, &offset)
+		info.ValueO = int32(binary.LittleEndian.Uint32(respBody[offset:]))
+		offset += 4
 	}
 	if offset < len(respBody) {
-		info.ValueN = readInt32(respBody, &offset)
+		info.ValueN = int32(binary.LittleEndian.Uint32(respBody[offset:]))
+		offset += 4
 	}
 	if offset < len(respBody) {
-		info.ValueC = readBigUint64(respBody, &offset)
+		info.ValueC = binary.LittleEndian.Uint64(respBody[offset:])
+		offset += 8
 	}
 
 	// // Parse nested arrays
