@@ -90,7 +90,6 @@ func DecodeSymbols(msg Message) (*SymbolList, error) {
 
 	offset := 4
 
-	i := 0
 	for range count {
 		record := body[offset : offset+recordSize]
 
@@ -104,10 +103,6 @@ func DecodeSymbols(msg Message) (*SymbolList, error) {
 			Basis:         readUTF16LE(record[460:524]),
 			Sector:        binary.LittleEndian.Uint16(record[524:526]),
 		}
-
-		i++
-
-		fmt.Printf("Parsed symbol %d Name: %s\n", i, symbol.Name)
 
 		result.Symbols = append(result.Symbols, symbol)
 		offset += recordSize

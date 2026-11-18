@@ -17,8 +17,9 @@ const (
 const (
 	CommandTickUpdate    uint16 = 8
 	CommandOrderPosition uint16 = 10
-	CommandSubmitTrade   uint16 = 12
-	CommandLoginSuccess  uint16 = 15
-	CommandTradeEvent    uint16 = 19
-	CommandPing          uint16 = 51
+
+	CommandSubmitTrade  uint16 = 12
+	CommandLoginSuccess uint16 = 15
+	CommandTradeEvent   uint16 = 19
+	CommandPing         uint16 = 51
 )
