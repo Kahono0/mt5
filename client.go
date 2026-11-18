@@ -125,8 +125,8 @@ type Client struct {
 	onAny         []handlerEntry
 	nextHandlerID uint64
 
-	msgCh chan Message
-	errCh chan error
+	//msgCh chan Message
+	//errCh chan error
 }
 
 // New creates a new [Client] with the given configuration. It does not
@@ -180,23 +180,23 @@ func New(config Config) (*Client, error) {
 		cfg:      config,
 		closeCh:  make(chan struct{}),
 		handlers: make(map[uint16][]handlerEntry),
-		msgCh:    make(chan Message, config.MessageBuffer),
-		errCh:    make(chan error, config.ErrorBuffer),
+		//msgCh:    make(chan Message, config.MessageBuffer),
+		//errCh:    make(chan error, config.ErrorBuffer),
 	}
 
 	return c, nil
 }
 
-// Messages returns a read-only channel of dispatched messages.
-func (c *Client) Messages() <-chan Message {
-	return c.msgCh
-}
-
-// Errors returns a read-only channel of non-fatal errors encountered
-// during operation.
-func (c *Client) Errors() <-chan error {
-	return c.errCh
-}
+//// Messages returns a read-only channel of dispatched messages.
+//func (c *Client) Messages() <-chan Message {
+//	return c.msgCh
+//}
+//
+//// Errors returns a read-only channel of non-fatal errors encountered
+//// during operation.
+//func (c *Client) Errors() <-chan error {
+//	return c.errCh
+//}
 
 // On registers a handler for a specific command ID. Multiple handlers
 // can be registered for the same command. Use [WithErrorHandler] to
@@ -444,7 +444,7 @@ func (c *Client) readLoop(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case <-c.closeCh:
 			return nil
 		default:
@@ -485,9 +485,8 @@ func (c *Client) readLoop(ctx context.Context) error {
 			continue
 		}
 
-		fmt.Printf("Recieved msg Code %d Body %d bytes\n", msg.Command, len(msg.Body))
-
 		c.dispatch(msg)
+
 	}
 }
 
@@ -595,8 +594,8 @@ func (c *Client) publishError(err error) {
 		c.cfg.OnError(err)
 	}
 
-	select {
-	case c.errCh <- err:
-	default:
-	}
+	//select {
+	//case c.errCh <- err:
+	//default:
+	//}
 }

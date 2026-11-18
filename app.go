@@ -164,15 +164,15 @@ func (c *AppClient) Close() error {
 	return c.core.Close()
 }
 
-// Messages returns a read-only channel of dispatched messages.
-func (c *AppClient) Messages() <-chan Message {
-	return c.core.Messages()
-}
-
-// Errors returns a read-only channel of non-fatal errors.
-func (c *AppClient) Errors() <-chan error {
-	return c.core.Errors()
-}
+//// Messages returns a read-only channel of dispatched messages.
+//func (c *AppClient) Messages() <-chan Message {
+//	return c.core.Messages()
+//}
+//
+//// Errors returns a read-only channel of non-fatal errors.
+//func (c *AppClient) Errors() <-chan error {
+//	return c.core.Errors()
+//}
 
 // RegisterHandler registers a handler for a specific command ID on the
 // underlying [Client]. Use [WithErrorHandler] to route errors from this
