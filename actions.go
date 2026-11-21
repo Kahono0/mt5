@@ -54,28 +54,6 @@ func BuildTickSubscriptionPayload(symbolIDs []uint32) []byte {
 	return buf
 }
 
-// RequestTradeHistory sends a request for trade history between the
-// given timestamps. The client must be authenticated.
-func (c *AppClient) RequestTradeHistory(from, to int32) error {
-	if !c.IsAuthenticated() {
-		return ErrNotAuthenticated
-	}
-	body := buildTradeHistoryPayload(from, to)
-	if err := c.core.SendCommand(CommandLoadHistory, body); err != nil {
-		return fmt.Errorf("failed to request trade history: %w", err)
-	}
-	return nil
-}
-
-// BuildTradeHistoryPayload encodes a from/to timestamp pair into the
-// binary payload format expected by the trade history command.
-func buildTradeHistoryPayload(from, to int32) []byte {
-	body := make([]byte, 8)
-	binary.LittleEndian.PutUint32(body[0:4], uint32(from))
-	binary.LittleEndian.PutUint32(body[4:8], uint32(to))
-	return body
-}
-
 func buildLoginRequest(
 	serverURL, password string,
 	accountID uint64,

@@ -3,6 +3,7 @@ package mt5
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -485,6 +486,7 @@ func (c *Client) readLoop(ctx context.Context) error {
 			continue
 		}
 
+		log.Printf("received message: command=%d code=%d body_length=%d", msg.Command, msg.Code, len(msg.Body))
 		c.dispatch(msg)
 
 	}

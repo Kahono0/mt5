@@ -380,6 +380,55 @@ func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
 			}
 
 			offset += length
+		case 13:
+			// Determine the length
+			length := f.PropLength
+			count := 1
+			if f.PropLengthType != 0 {
+				switch f.PropLengthType {
+				case 4:
+					count = int(buf[offset])
+					offset += 1
+				case 5:
+					count = int(binary.LittleEndian.Uint16(buf[offset:]))
+					offset += 2
+				case 6:
+					count = int(binary.LittleEndian.Uint32(buf[offset:]))
+					offset += 4
+				default:
+					return nil, errors.New("unsupported PropLengthType")
+				}
+			}
+
+			totalLength := length * count
+			// Check buffer bounds
+			if offset+totalLength > len(buf) {
+				return nil, fmt.Errorf(
+					"buffer too short for PropType 13, need %d bytes, got %d",
+					totalLength,
+					len(buf)-offset,
+				)
+			}
+
+			// Use field parser if provided
+			if f.Parser != nil {
+				outVal := make([]interface{}, count)
+				for i := range count {
+					val, err := f.Parser(buf[offset:offset+length], 0)
+					if err != nil {
+						return nil, fmt.Errorf("PropType 13 parser error at index %d: %w", i, err)
+					}
+					outVal[i] = val
+					offset += length
+				}
+				out[i] = outVal
+			} else {
+				// fallback: raw bytes
+				out[i] = buf[offset : offset+length]
+
+				offset += length
+			}
+
 		case 17:
 			out[i] = int64(binary.LittleEndian.Uint64(buf[offset:]))
 			offset += 8
