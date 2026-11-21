@@ -151,7 +151,7 @@ func Serialize(fields []Field) ([]byte, error) {
 			if length == 0 {
 				length = len(s)
 			}
-			copy(buf[offset:], []byte(s))
+			copy(buf[offset:], s)
 			if len(s) < length {
 				for i := len(s); i < length; i++ {
 					buf[offset+i] = 0
