@@ -8,7 +8,7 @@ import (
 
 type TradeRequest struct {
 	ActionID       uint32
-	TradeAction    uint32
+	TradeAction    TradeAction
 	TradeSymbol    string
 	TradeVolume    uint64
 	Digits         uint32
@@ -35,7 +35,7 @@ type TradeRequest struct {
 func (t *TradeRequest) ToFields() []ec.Field {
 	return []ec.Field{
 		{PropType: 6, PropValue: t.ActionID},
-		{PropType: 6, PropValue: t.TradeAction},
+		{PropType: 6, PropValue: uint32(t.TradeAction)},
 		{PropType: 11, PropValue: t.TradeSymbol[:min(32, len(t.TradeSymbol))], PropLength: 64},
 		{PropType: 18, PropValue: t.TradeVolume},
 		{PropType: 6, PropValue: t.Digits},
@@ -59,7 +59,7 @@ func (t *TradeRequest) ToFields() []ec.Field {
 	}
 }
 
-func (c *AppClient) SubmitTrade(req *TradeRequest) error {
+func (c *AppClient) SendOrder(req *TradeRequest) error {
 	fields := req.ToFields()
 
 	body, err := ec.Serialize(fields)

@@ -6,7 +6,35 @@ import (
 	"github.com/kahono0/mt5/internal/ec"
 )
 
-type TradeEvent struct {
+type ReturnCode uint32
+
+const (
+	TRADE_RETCODE_REQUOTE        ReturnCode = 10004 // Requote
+	TRADE_RETCODE_REJECT         ReturnCode = 10006 // Request rejected
+	TRADE_RETCODE_CANCEL         ReturnCode = 10007 // Request canceled by trader
+	TRADE_RETCODE_PLACED         ReturnCode = 10008 // Order placed
+	TRADE_RETCODE_DONE           ReturnCode = 10009 // Request completed
+	TRADE_RETCODE_DONE_PARTIAL   ReturnCode = 10010 // Only part of the request was completed
+	TRADE_RETCODE_ERROR          ReturnCode = 10011 // Request processing error
+	TRADE_RETCODE_TIMEOUT        ReturnCode = 10012 // Request canceled by timeout
+	TRADE_RETCODE_INVALID        ReturnCode = 10013 // Invalid request
+	TRADE_RETCODE_INVALID_VOLUME ReturnCode = 10014 // Invalid volume in the request
+	TRADE_RETCODE_INVALID_PRICE  ReturnCode = 10015 // Invalid price in the request
+	TRADE_RETCODE_INVALID_STOPS  ReturnCode = 10016 // Invalid stops in the request
+)
+
+type TradeAction uint32
+
+const (
+	TRADE_ACTION_DEAL     TradeAction = 3
+	TRADE_ACTION_PENDING  TradeAction = 4
+	TRADE_ACTION_SLTP     TradeAction = 5
+	TRADE_ACTION_MODIFY   TradeAction = 6
+	TRADE_ACTION_REMOVE   TradeAction = 7
+	TRADE_ACTION_CLOSE_BY TradeAction = 8
+)
+
+type TradeEventRequest struct {
 	TradeVolume    uint64
 	PriceOrder     float64
 	PriceTrigger   float64
@@ -16,7 +44,7 @@ type TradeEvent struct {
 	PriceTop       float64
 	PriceBottom    float64
 	ActionID       uint32
-	TradeAction    uint32
+	TradeAction    TradeAction
 	TradeSymbol    string
 	Digits         uint32
 	TradeOrder     int64
@@ -24,44 +52,42 @@ type TradeEvent struct {
 	TypeFilling    uint32
 	TypeFlags      uint32
 	Comment        string
-	Position       uint64
+	PositionBy     uint64
 	SendTime       int
 	Login          uint64
 	Complete       bool
 }
 
-type yp struct {
-	Retcode    int
-	Deal       uint64
-	TradeOrder uint64
-	Volume     uint64
+type TradeResult struct {
+	Retcode    ReturnCode
+	Deal       int64
+	TradeOrder int64
+	Volume     int64
 	Price      float64
-	ResTime    uint64
+	ResTime    uint32
 	Bid        float64
 	Ask        float64
 	Last       float64
 	Comment    string
 }
 
-func ParseTradeEvent(t []byte) ([]*TradeEvent, []*yp, error) {
+type TradeEvent struct {
+	EventID      uint32
+	TradeRequest *TradeEventRequest
+	TradeResult  *TradeResult
+}
+
+func ParseTradeEvent(t []byte) (*TradeEvent, error) {
 	parsed, err := ec.Parse(t, P, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// parsed is []interface{someint, *Sp, *yp}
-	spList := []*TradeEvent{}
-	ypList := []*yp{}
-	for _, item := range parsed {
-		switch v := item.(type) {
-		case *TradeEvent:
-			spList = append(spList, v)
-		case *yp:
-			ypList = append(ypList, v)
-		}
-	}
-	return spList, ypList, nil
-
+	return &TradeEvent{
+		EventID:      parsed[0].(uint32),
+		TradeRequest: parsed[1].(*TradeEventRequest),
+		TradeResult:  parsed[2].(*TradeResult),
+	}, nil
 }
 
 var Pp = []ec.Field{
@@ -86,12 +112,12 @@ var P = []ec.Field{
 	{
 		PropType:   12,
 		PropLength: Ep,
-		Parser:     ParseSp,
+		Parser:     parseTradeEventRequest,
 	},
 	{
 		PropType:   12,
 		PropLength: PpLength,
-		Parser:     ParseYP,
+		Parser:     parseTradeResult,
 	},
 }
 
@@ -122,7 +148,7 @@ var Ap = []ec.Field{
 
 var Ep, _ = ec.GetSeriesSize(Ap) // same as Pc.getSeriesSize(Ap)
 
-func ParseSp(t []byte, e int) (interface{}, error) {
+func parseTradeEventRequest(t []byte, e int) (interface{}, error) {
 	parsed, err := ec.Parse(t, Ap, e)
 	if err != nil {
 		return nil, err
@@ -132,9 +158,9 @@ func ParseSp(t []byte, e int) (interface{}, error) {
 		return nil, fmt.Errorf("expected at least 21 values, got %d", len(parsed))
 	}
 
-	sp := &TradeEvent{
+	request := &TradeEventRequest{
 		ActionID:    parsed[0].(uint32),
-		TradeAction: parsed[1].(uint32),
+		TradeAction: TradeAction(parsed[1].(uint32)),
 		TradeSymbol: parsed[2].(string),
 		TradeVolume: parsed[3].(uint64),
 		Digits:      parsed[4].(uint32),
@@ -143,35 +169,35 @@ func ParseSp(t []byte, e int) (interface{}, error) {
 		TypeFilling: parsed[7].(uint32),
 		TypeFlags:   parsed[9].(uint32),
 		Comment:     parsed[18].(string),
-		Position:    parsed[19].(uint64),
+		PositionBy:  parsed[19].(uint64),
 	}
 
-	sp.PriceOrder = parsed[11].(float64)
-	sp.PriceTrigger = parsed[12].(float64)
-	sp.PriceSL = parsed[13].(float64)
-	sp.PriceTP = parsed[14].(float64)
-	sp.PriceDeviation = parsed[15].(uint32)
-	sp.PriceTop = parsed[16].(float64)
-	sp.PriceBottom = parsed[17].(float64)
+	request.PriceOrder = parsed[11].(float64)
+	request.PriceTrigger = parsed[12].(float64)
+	request.PriceSL = parsed[13].(float64)
+	request.PriceTP = parsed[14].(float64)
+	request.PriceDeviation = parsed[15].(uint32)
+	request.PriceTop = parsed[16].(float64)
+	request.PriceBottom = parsed[17].(float64)
 
-	return sp, nil
+	return request, nil
 }
 
-// ParseYP parses fields using Pp and casts directly
-func ParseYP(t []byte, e int) (interface{}, error) {
+// parseTradeResult parses fields using Pp and casts directly
+func parseTradeResult(t []byte, e int) (interface{}, error) {
 	parsed, err := ec.Parse(t, Pp, e) // Parse returns []interface{}
 	if err != nil {
 		return nil, err
 	}
 
-	s := &yp{}
+	s := &TradeResult{}
 
-	s.Retcode = int(parsed[0].(uint32))
-	s.Deal = uint64(parsed[1].(int64))
-	s.TradeOrder = uint64(parsed[2].(int64))
-	s.Volume = uint64(parsed[3].(int64))
+	s.Retcode = ReturnCode(parsed[0].(uint32))
+	s.Deal = parsed[1].(int64)
+	s.TradeOrder = parsed[2].(int64)
+	s.Volume = parsed[3].(int64)
 	s.Price = parsed[4].(float64)
-	s.ResTime = uint64(parsed[5].(uint32))
+	s.ResTime = parsed[5].(uint32)
 	s.Bid = parsed[6].(float64)
 	s.Ask = parsed[7].(float64)
 	s.Last = parsed[8].(float64)
@@ -180,9 +206,7 @@ func ParseYP(t []byte, e int) (interface{}, error) {
 	return s, nil
 }
 
-type TradeResult = yp
-
-type TradeEventHandler func(event []*TradeEvent, yp []*TradeResult)
+type TradeEventHandler func(event *TradeEvent)
 
 func (c *AppClient) RegisterTradeEventHandler(handler TradeEventHandler, opts ...HandlerOption) func() {
 	if handler == nil {
@@ -190,11 +214,11 @@ func (c *AppClient) RegisterTradeEventHandler(handler TradeEventHandler, opts ..
 	}
 
 	return c.RegisterHandler(CommandTradeEvent, func(msg Message) error {
-		spList, ypList, err := ParseTradeEvent(msg.Body)
+		event, err := ParseTradeEvent(msg.Body)
 		if err != nil {
 			return err
 		}
-		handler(spList, ypList)
+		handler(event)
 
 		return nil
 	}, opts...)
