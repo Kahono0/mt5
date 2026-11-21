@@ -15,6 +15,8 @@ type Field struct {
 	PropLength     int
 	PropLengthType int
 	Parser         func([]byte, int) (interface{}, error) // optional custom parser for PropType 12
+	InnerFields    []Field                                // optional inner fields for PropType 12/13
+	FromValues     func([]interface{}) any                // optional function to convert parsed values to a struct
 }
 
 func GetSeriesSize(fields []Field) (int, error) {
@@ -374,6 +376,16 @@ func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
 					return nil, fmt.Errorf("PropType 12 parser error: %w", err)
 				}
 				out[i] = val
+			} else if len(f.InnerFields) != 0 {
+				val, err := Parse(buf[offset:offset+length], f.InnerFields, 0)
+				if err != nil {
+					return nil, fmt.Errorf("PropType 12 inner fields parse error: %w", err)
+				}
+				if f.FromValues != nil {
+					out[i] = f.FromValues(val)
+				} else {
+					out[i] = val
+				}
 			} else {
 				// fallback: raw bytes
 				out[i] = buf[offset : offset+length]
@@ -419,6 +431,21 @@ func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
 						return nil, fmt.Errorf("PropType 13 parser error at index %d: %w", i, err)
 					}
 					outVal[i] = val
+					offset += length
+				}
+				out[i] = outVal
+			} else if len(f.InnerFields) != 0 {
+				outVal := make([]interface{}, count)
+				for i := range count {
+					val, err := Parse(buf[offset:offset+length], f.InnerFields, 0)
+					if err != nil {
+						return nil, fmt.Errorf("PropType 13 inner fields parse error at index %d: %w", i, err)
+					}
+					if f.FromValues != nil {
+						outVal[i] = f.FromValues(val)
+					} else {
+						outVal[i] = val
+					}
 					offset += length
 				}
 				out[i] = outVal
