@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -67,6 +69,7 @@ func main() {
 	}
 
 	log.Printf("Account info: %s", accountInfo.Core.AccountName)
+	fmt.Println(asPrettyJSON(accountInfo))
 
 	openPositions, err := client.GetOpenPositions(context.Background())
 	if err != nil {
@@ -75,16 +78,24 @@ func main() {
 
 	log.Printf("Open positions: %v", openPositions)
 
-	now := time.Now()
-	from := now.Add(-48 * time.Hour)
-	to := now
+	//now := time.Now()
+	//from := now.Add(-72 * time.Hour)
+	//to := now
 
-	tradeHistory, err := client.GetTradeHistory(context.Background(), from, to)
-	if err != nil {
-		log.Fatal(err)
-	}
+	//tradeHistory, err := client.GetTradeHistory(context.Background(), from, to)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
 
-	log.Printf("Trade history: %v", tradeHistory)
+	//log.Printf("Trade history: DealsCount=%d, OrdersCount=%d", len(tradeHistory.Deals), len(tradeHistory.Orders))
 
 	select {}
+}
+
+func asPrettyJSON(v any) string {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("failed to marshal to JSON: %v", err)
+	}
+	return string(b)
 }

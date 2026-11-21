@@ -27,6 +27,26 @@ func (r *recordReader) take(size int) []byte {
 	return value
 }
 
+func (r *recordReader) readUint8() uint8 {
+	buf := r.take(1)
+	if buf == nil {
+		return 0
+	}
+	return buf[0]
+}
+
+func (r *recordReader) readInt8() int8 { return int8(r.readUint8()) }
+
+func (r *recordReader) readUint16() uint16 {
+	buf := r.take(2)
+	if buf == nil {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(buf)
+}
+
+func (r *recordReader) readInt16() int16 { return int16(r.readUint16()) }
+
 func (r *recordReader) readUint32() uint32 {
 	buf := r.take(4)
 	if buf == nil {
@@ -47,6 +67,18 @@ func (r *recordReader) readUint64() uint64 {
 
 func (r *recordReader) readFloat64() float64 {
 	return math.Float64frombits(r.readUint64())
+}
+
+func (r *recordReader) readFloat64Array(size int) []float64 {
+	buf := r.take(size)
+	if buf == nil {
+		return nil
+	}
+	result := make([]float64, size/8)
+	for i := range result {
+		result[i] = math.Float64frombits(binary.LittleEndian.Uint64(buf[i*8:]))
+	}
+	return result
 }
 
 func (r *recordReader) readString(size int) string {

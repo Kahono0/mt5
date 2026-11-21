@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/kahono0/mt5/internal/ec"
 )
 
 const defaultSessionKeyOffset = 66
@@ -185,22 +184,6 @@ func (c *AppClient) RegisterHandler(
 	opts ...HandlerOption,
 ) func() {
 	return c.core.On(command, handler, opts...)
-}
-
-func (c *AppClient) RegisterParsableHandler(
-	command uint16,
-	m ec.Parsable,
-	handler func(parsed any),
-	opts ...HandlerOption,
-) func() {
-	return c.core.On(command, func(msg Message) error {
-		parsed, err := ec.ParseToValue(m, msg.Body)
-		if err != nil {
-			return fmt.Errorf("failed to parse %T: %w", m, err)
-		}
-		handler(parsed)
-		return nil
-	}, opts...)
 }
 
 // RegisterAnyHandler registers a handler that is called for every

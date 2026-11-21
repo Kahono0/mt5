@@ -18,9 +18,14 @@ func (c *AppClient) RegisterTradeHistoryHandler(handler TradeHistoryHandler, opt
 		return func() {}
 	}
 
-	return c.RegisterParsableHandler(CommandLoadHistory, &models.TradeHistory{}, func(parsed any) {
-		history := parsed.(*models.TradeHistory)
+	return c.RegisterHandler(CommandLoadHistory, func(msg Message) error {
+		history := &TradeHistory{}
+		if err := history.ParseFromBytes(msg.Body); err != nil {
+			return fmt.Errorf("failed to parse trade history: %w", err)
+		}
+
 		handler(history)
+		return nil
 	}, opts...)
 }
 
