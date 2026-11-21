@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -472,15 +473,38 @@ func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
 
 // parseUTF16 converts little-endian UTF-16 bytes to string, stops at first null
 func parseUTF16(buf []byte) string {
-	runes := []rune{}
-	for i := 0; i+1 < len(buf); i += 2 {
-		code := binary.LittleEndian.Uint16(buf[i:])
-		if code == 0 {
+	// A UTF-16 code unit expands to at most three UTF-8 bytes. A surrogate
+	// pair takes four bytes for two code units, so this capacity is sufficient
+	// for the entire decoded string and avoids an intermediate []rune.
+	var result strings.Builder
+	result.Grow((len(buf) / 2) * 3)
+
+	for i := 0; i+1 < len(buf); {
+		first := binary.LittleEndian.Uint16(buf[i:])
+		if first == 0 {
 			break
 		}
-		runes = append(runes, rune(code))
+		i += 2
+
+		r := rune(first)
+		if first >= 0xD800 && first <= 0xDBFF {
+			if i+1 < len(buf) {
+				second := binary.LittleEndian.Uint16(buf[i:])
+				if second >= 0xDC00 && second <= 0xDFFF {
+					r = utf16.DecodeRune(r, rune(second))
+					i += 2
+				} else {
+					r = '\uFFFD'
+				}
+			} else {
+				r = '\uFFFD'
+			}
+		} else if first >= 0xDC00 && first <= 0xDFFF {
+			r = '\uFFFD'
+		}
+		result.WriteRune(r)
 	}
-	return string(runes)
+	return result.String()
 }
 
 func bytesToUint16Slice(buf []byte) []uint16 {
