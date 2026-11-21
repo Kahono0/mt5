@@ -78,6 +78,8 @@ func (o Order) FromValuesOrder(parsed []interface{}) any {
 	return order
 }
 
+var OrderPropsSize, _ = ec.GetSeriesSize(OrderProps)
+
 var OrderProps = []ec.Field{
 	{PropType: 17},
 	{PropType: 11, PropLength: historyTextBytes},
@@ -111,4 +113,46 @@ var OrderProps = []ec.Field{
 	{PropType: 3},
 }
 
-var OrderPropsSize, _ = ec.GetSeriesSize(OrderProps)
+func (o *Order) ParseFromBytes(buf []byte) error {
+	r := recordReader{buf: buf}
+	o.TradeOrder = r.readUint64()
+	o.OrderID = r.readString(historyTextBytes)
+	o.TradeSymbol = r.readString(historyTextBytes)
+	timeSetup := r.readUint32()
+	timeExpiration := r.readUint32()
+	timeDone := r.readUint32()
+	o.OrderType = int32(r.readUint32())
+	o.TypeFilling = int32(r.readUint32())
+	o.TypeTime = int32(r.readUint32())
+	o.TypeReason = int32(r.readUint32())
+	o.PriceOrder = r.readFloat64()
+	o.PriceTrigger = r.readFloat64()
+	o.PriceCurrent = r.readFloat64()
+	o.PriceSL = r.readFloat64()
+	o.PriceTP = r.readFloat64()
+	o.VolumeInitial = r.readUint64()
+	o.VolumeCurrent = r.readUint64()
+	o.OrderState = int32(r.readUint32())
+	o.Expert = r.readUint64()
+	o.PositionID = r.readUint64()
+	o.Comment = r.readString(historyTextBytes)
+	o.ContractSize = r.readFloat64()
+	o.Digits = int32(r.readUint32())
+	o.DigitsCurrency = int32(r.readUint32())
+	o.CommissionDaily = r.readFloat64()
+	o.CommissionMonthly = r.readFloat64()
+	o.MarginRate = r.readFloat64()
+	o.ActivationMode = int32(r.readUint32())
+	timeSetupSubseconds := r.readInt32()
+	timeDoneSubseconds := r.readInt32()
+
+	if err := r.finish(); err != nil {
+		return err
+	}
+
+	o.TimeSetup = int64(timeSetup)*1000 + int64(timeSetupSubseconds)
+	o.TimeExpiration = int64(timeExpiration) * 1000
+	o.TimeDone = int64(timeDone)*1000 + int64(timeDoneSubseconds)
+
+	return nil
+}

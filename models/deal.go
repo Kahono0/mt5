@@ -70,6 +70,8 @@ func (d Deal) FromValues(values []interface{}) any {
 	return deal
 }
 
+var DealPropsSize, _ = ec.GetSeriesSize(DealProps)
+
 var DealProps = []ec.Field{
 	{PropType: 17},
 	{PropType: 11, PropLength: historyTextBytes},
@@ -101,4 +103,43 @@ var DealProps = []ec.Field{
 	{PropType: 8},
 }
 
-var DealPropsSize, _ = ec.GetSeriesSize(DealProps)
+func (d *Deal) ParseFromBytes(buf []byte) error {
+	r := recordReader{buf: buf}
+	d.Deal = int64(r.readUint64())
+	d.DealID = r.readString(historyTextBytes)
+	d.TradeOrder = int64(r.readUint64())
+	timeCreate := r.readUint32()
+	timeUpdate := r.readUint32()
+	d.TradeSymbol = r.readString(historyTextBytes)
+	d.TradeAction = r.readUint32()
+	d.Entry = r.readUint32()
+	d.PriceOpen = r.readFloat64()
+	d.PriceClose = r.readFloat64()
+	d.SL = r.readFloat64()
+	d.TP = r.readFloat64()
+	d.TradeVolume = int64(r.readUint64())
+	d.Profit = r.readFloat64()
+	d.RateProfit = r.readFloat64()
+	d.RateMargin = r.readFloat64()
+	d.Commission = r.readFloat64()
+	d.Storage = r.readFloat64()
+	d.Expert = int64(r.readUint64())
+	d.PositionID = int64(r.readUint64())
+	d.Comment = r.readString(historyTextBytes)
+	d.ContractSize = int64(r.readFloat64())
+	d.Digits = int64(r.readUint32())
+	d.DigitsCurrency = int64(r.readUint32())
+	d.TradeReason = int64(r.readUint32())
+	timeCreateSubseconds := r.readInt32()
+	timeUpdateSubseconds := r.readInt32()
+	d.CommissionFee = r.readFloat64()
+
+	if err := r.finish(); err != nil {
+		return err
+	}
+
+	d.TimeCreate = 1000*timeCreate + uint32(timeCreateSubseconds)
+	d.TimeUpdate = 1000*timeUpdate + uint32(timeUpdateSubseconds)
+
+	return nil
+}

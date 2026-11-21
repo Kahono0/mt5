@@ -97,6 +97,30 @@ func TestParseTradeHistoryFromBytes(t *testing.T) {
 	if len(history.Orders) != 52 {
 		t.Fatalf("expected 52 orders, got %d", len(history.Orders))
 	}
+
+	lastDeal := history.Deals[len(history.Deals)-1]
+	lastOrder := history.Orders[len(history.Orders)-1]
+
+	if lastDeal.PositionID == 0 || lastDeal.PositionID != int64(lastOrder.PositionID) {
+		t.Fatalf("last deal position ID (%d) does not match last order position ID (%d)", lastDeal.PositionID, lastOrder.PositionID)
+	}
+}
+
+// benchmark parsing trade history using handwritten ParseFromBytes method
+func BenchmarkParseTradeHistoryFromBytes(b *testing.B) {
+	data, err := os.ReadFile("testdata/trade_history.bin")
+	if err != nil {
+		b.Fatalf("failed to read test data: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		history := &TradeHistory{}
+		err = history.ParseFromBytes(data)
+		if err != nil {
+			b.Fatalf("failed to parse trade history: %v", err)
+		}
+	}
 }
 
 // benchmark parsing trade history using compiled schema
