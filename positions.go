@@ -50,7 +50,7 @@ func (c *AppClient) RequestOpenPositions() error {
 	return nil
 }
 
-type PositionsHandler func(positions []Position, msg Message)
+type PositionsHandler func(positions []*Position, msg Message)
 
 func (c *AppClient) RegisterPositionsHandler(handler PositionsHandler, opts ...HandlerOption) func() {
 	if handler == nil {
@@ -68,19 +68,19 @@ func (c *AppClient) RegisterPositionsHandler(handler PositionsHandler, opts ...H
 	}, opts...)
 }
 
-func (c *AppClient) GetOpenPositions(ctx context.Context) ([]Position, error) {
+func (c *AppClient) GetOpenPositions(ctx context.Context) ([]*Position, error) {
 	if !c.IsAuthenticated() {
 		return nil, ErrNotAuthenticated
 	}
 
 	type result struct {
-		positions []Position
+		positions []*Position
 		err       error
 	}
 
 	ch := make(chan result, 1)
 
-	cancel := c.RegisterPositionsHandler(func(positions []Position, msg Message) {
+	cancel := c.RegisterPositionsHandler(func(positions []*Position, msg Message) {
 		ch <- result{positions: positions, err: nil}
 	}, WithErrorHandler(func(err error) {
 		ch <- result{positions: nil, err: err}
@@ -99,7 +99,7 @@ func (c *AppClient) GetOpenPositions(ctx context.Context) ([]Position, error) {
 	}
 }
 
-func DecodePositions(msg Message) ([]Position, error) {
+func DecodePositions(msg Message) ([]*Position, error) {
 	if msg.Command != CommandRequestPositions {
 		return nil, fmt.Errorf("unexpected command %d for positions", msg.Command)
 	}
@@ -113,7 +113,7 @@ func DecodePositions(msg Message) ([]Position, error) {
 }
 
 // ParsePositions deserializes an ArrayBuffer response into positions.
-func ParsePositions(resp []byte) ([]Position, error) {
+func ParsePositions(resp []byte) ([]*Position, error) {
 	// fields []ec.Field, entrySize int
 	fields := TradePositionFields
 	entrySize, err := ec.GetSeriesSize(fields)
@@ -127,7 +127,7 @@ func ParsePositions(resp []byte) ([]Position, error) {
 	// First 4 bytes = number of positions (little endian)
 	count := binary.LittleEndian.Uint32(resp[:4])
 	offset := 4
-	positions := make([]Position, 0, count)
+	positions := make([]*Position, 0, count)
 
 	for i := uint32(0); i < count; i++ {
 		if offset+entrySize > len(resp) {
@@ -140,7 +140,7 @@ func ParsePositions(resp []byte) ([]Position, error) {
 		}
 
 		// Map parsed slice to Position struct
-		pos := Position{
+		pos := &Position{
 			PositionID:       parsed[0].(int64),
 			TradeOrder:       parsed[1].(int64),
 			TimeCreate:       uint64(parsed[2].(uint32))*1000 + uint64(parsed[24].(int32)),
