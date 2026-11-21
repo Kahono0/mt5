@@ -72,11 +72,11 @@ func (d Deal) FromValues(values []interface{}) any {
 
 var DealProps = []ec.Field{
 	{PropType: 17},
-	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: historyTextBytes},
 	{PropType: 17},
 	{PropType: 6},
 	{PropType: 6},
-	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: historyTextBytes},
 	{PropType: 6},
 	{PropType: 6},
 	{PropType: 8},
@@ -91,7 +91,7 @@ var DealProps = []ec.Field{
 	{PropType: 8},
 	{PropType: 17},
 	{PropType: 17},
-	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: historyTextBytes},
 	{PropType: 8},
 	{PropType: 6},
 	{PropType: 6},

@@ -20,6 +20,81 @@ type Field struct {
 	FromValues     func([]interface{}) any                // optional function to convert parsed values to a struct
 }
 
+// Schema is a compiled, immutable snapshot of field definitions. Compile a
+// schema once and reuse it when parsing messages that share the same layout.
+type Schema struct {
+	fields []compiledField
+}
+
+type compiledField struct {
+	Field
+	inner  *Schema
+	decode func([]byte, int) (interface{}, int)
+}
+
+// CompileSchema snapshots fields and compiles nested field definitions so
+// repeated records do not rebuild their schema while parsing.
+func CompileSchema(fields []Field) *Schema {
+	schema := &Schema{fields: make([]compiledField, len(fields))}
+	for i, field := range fields {
+		field.InnerFields = append([]Field(nil), field.InnerFields...)
+		schema.fields[i].Field = field
+		schema.fields[i].decode = primitiveDecoder(field.PropType)
+		if len(field.InnerFields) != 0 {
+			schema.fields[i].inner = CompileSchema(field.InnerFields)
+		}
+	}
+	return schema
+}
+
+// Parse decodes buf according to the compiled schema.
+func (s *Schema) Parse(buf []byte, offset int) ([]interface{}, error) {
+	return parseSchema(buf, s, offset)
+}
+
+func primitiveDecoder(propType int) func([]byte, int) (interface{}, int) {
+	switch propType {
+	case 1:
+		return func(buf []byte, offset int) (interface{}, int) { return int8(buf[offset]), offset + 1 }
+	case 2:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return int16(binary.LittleEndian.Uint16(buf[offset:])), offset + 2
+		}
+	case 3:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return int32(binary.LittleEndian.Uint32(buf[offset:])), offset + 4
+		}
+	case 4:
+		return func(buf []byte, offset int) (interface{}, int) { return buf[offset], offset + 1 }
+	case 5:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return binary.LittleEndian.Uint16(buf[offset:]), offset + 2
+		}
+	case 6:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return binary.LittleEndian.Uint32(buf[offset:]), offset + 4
+		}
+	case 7:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return math.Float32frombits(binary.LittleEndian.Uint32(buf[offset:])), offset + 4
+		}
+	case 8:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return math.Float64frombits(binary.LittleEndian.Uint64(buf[offset:])), offset + 8
+		}
+	case 17:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return int64(binary.LittleEndian.Uint64(buf[offset:])), offset + 8
+		}
+	case 18:
+		return func(buf []byte, offset int) (interface{}, int) {
+			return binary.LittleEndian.Uint64(buf[offset:]), offset + 8
+		}
+	default:
+		return nil
+	}
+}
+
 func GetSeriesSize(fields []Field) (int, error) {
 	size := 0
 
@@ -290,9 +365,18 @@ func toFloat64(val interface{}) (float64, bool) {
 
 // Parse parses a byte buffer according to field definitions
 func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
-	out := make([]interface{}, len(fields))
+	return CompileSchema(fields).Parse(buf, offset)
+}
 
-	for i, f := range fields {
+func parseSchema(buf []byte, schema *Schema, offset int) ([]interface{}, error) {
+	out := make([]interface{}, len(schema.fields))
+
+	for i, compiled := range schema.fields {
+		if compiled.decode != nil {
+			out[i], offset = compiled.decode(buf, offset)
+			continue
+		}
+		f := compiled.Field
 		switch f.PropType {
 		case 1:
 			out[i] = int8(buf[offset])
@@ -378,7 +462,7 @@ func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
 				}
 				out[i] = val
 			} else if len(f.InnerFields) != 0 {
-				val, err := Parse(buf[offset:offset+length], f.InnerFields, 0)
+				val, err := compiled.inner.Parse(buf[offset:offset+length], 0)
 				if err != nil {
 					return nil, fmt.Errorf("PropType 12 inner fields parse error: %w", err)
 				}
@@ -438,7 +522,7 @@ func Parse(buf []byte, fields []Field, offset int) ([]interface{}, error) {
 			} else if len(f.InnerFields) != 0 {
 				outVal := make([]interface{}, count)
 				for i := range count {
-					val, err := Parse(buf[offset:offset+length], f.InnerFields, 0)
+					val, err := compiled.inner.Parse(buf[offset:offset+length], 0)
 					if err != nil {
 						return nil, fmt.Errorf("PropType 13 inner fields parse error at index %d: %w", i, err)
 					}
@@ -505,6 +589,12 @@ func parseUTF16(buf []byte) string {
 		result.WriteRune(r)
 	}
 	return result.String()
+}
+
+// DecodeUTF16 converts little-endian UTF-16 bytes to a string, stopping at
+// the first null code unit. It is exposed for handwritten model decoders.
+func DecodeUTF16(buf []byte) string {
+	return parseUTF16(buf)
 }
 
 func bytesToUint16Slice(buf []byte) []uint16 {

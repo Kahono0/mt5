@@ -80,8 +80,8 @@ func (o Order) FromValuesOrder(parsed []interface{}) any {
 
 var OrderProps = []ec.Field{
 	{PropType: 17},
-	{PropType: 11, PropLength: 64},
-	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: historyTextBytes},
+	{PropType: 11, PropLength: historyTextBytes},
 	{PropType: 6},
 	{PropType: 6},
 	{PropType: 6},
@@ -99,7 +99,7 @@ var OrderProps = []ec.Field{
 	{PropType: 6},
 	{PropType: 17},
 	{PropType: 17},
-	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: historyTextBytes},
 	{PropType: 8},
 	{PropType: 6},
 	{PropType: 6},

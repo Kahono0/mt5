@@ -116,6 +116,7 @@ func DecodePositions(msg Message) ([]*Position, error) {
 func ParsePositions(resp []byte) ([]*Position, error) {
 	// fields []ec.Field, entrySize int
 	fields := TradePositionFields
+	schema := ec.CompileSchema(fields)
 	entrySize, err := ec.GetSeriesSize(fields)
 	if err != nil {
 		return nil, err
@@ -134,7 +135,7 @@ func ParsePositions(resp []byte) ([]*Position, error) {
 			return nil, errors.New("buffer too short for all positions")
 		}
 
-		parsed, err := ec.Parse(resp[offset:offset+entrySize], fields, 0)
+		parsed, err := schema.Parse(resp[offset:offset+entrySize], 0)
 		if err != nil {
 			return nil, err
 		}

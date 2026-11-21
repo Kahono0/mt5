@@ -370,6 +370,7 @@ func ParseAccountInfo(respBody []byte) (*AccountInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	tradeSettingsSchema := ec.CompileSchema(accountTradeSettingsFields)
 	// Parse TradeSettings
 	if offset < len(respBody) {
 		count := binary.LittleEndian.Uint32(respBody[offset:])
@@ -377,7 +378,7 @@ func ParseAccountInfo(respBody []byte) (*AccountInfo, error) {
 		info.TradeSettings = make([]AccountTradeSettings, 0, count)
 
 		for i := range count {
-			v, err := ec.Parse(respBody, accountTradeSettingsFields, offset)
+			v, err := tradeSettingsSchema.Parse(respBody, offset)
 			if err != nil {
 				return nil, err
 			}

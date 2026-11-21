@@ -40,6 +40,84 @@ func TestParseTradeHistory(t *testing.T) {
 	}
 }
 
+// test using compiled schema
+func TestParseTradeHistoryCompiled(t *testing.T) {
+	data, err := os.ReadFile("testdata/trade_history.bin")
+	if err != nil {
+		t.Fatalf("failed to read test data: %v", err)
+	}
+
+	t.Logf("data length: %d bytes", len(data))
+
+	st := time.Now()
+	fields := (&TradeHistory{}).Fields()
+
+	schema := ec.CompileSchema(fields)
+
+	parsed, err := schema.Parse(data, 0)
+	if err != nil {
+		t.Fatalf("failed to parse trade history: %v", err)
+	}
+
+	history := (&TradeHistory{}).FromValues(parsed).(*TradeHistory)
+
+	t.Logf("parsed trade history in %v", time.Since(st))
+
+	if len(history.Deals) != 52 {
+		t.Fatalf("expected 52 deals, got %d", len(history.Deals))
+	}
+
+	if len(history.Orders) != 52 {
+		t.Fatalf("expected 52 orders, got %d", len(history.Orders))
+	}
+}
+
+// test parsing trade history using handwritten ParseFromBytes method
+func TestParseTradeHistoryFromBytes(t *testing.T) {
+	data, err := os.ReadFile("testdata/trade_history.bin")
+	if err != nil {
+		t.Fatalf("failed to read test data: %v", err)
+	}
+
+	t.Logf("data length: %d bytes", len(data))
+
+	st := time.Now()
+	history := &TradeHistory{}
+	err = history.ParseFromBytes(data)
+	if err != nil {
+		t.Fatalf("failed to parse trade history: %v", err)
+	}
+
+	t.Logf("parsed trade history in %v", time.Since(st))
+
+	if len(history.Deals) != 52 {
+		t.Fatalf("expected 52 deals, got %d", len(history.Deals))
+	}
+
+	if len(history.Orders) != 52 {
+		t.Fatalf("expected 52 orders, got %d", len(history.Orders))
+	}
+}
+
+// benchmark parsing trade history using compiled schema
+func BenchmarkParseTradeHistoryCompiled(b *testing.B) {
+	data, err := os.ReadFile("testdata/trade_history.bin")
+	if err != nil {
+		b.Fatalf("failed to read test data: %v", err)
+	}
+
+	fields := (&TradeHistory{}).Fields()
+	schema := ec.CompileSchema(fields)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := schema.Parse(data, 0)
+		if err != nil {
+			b.Fatalf("failed to parse trade history: %v", err)
+		}
+	}
+}
+
 // benchmark parsing trade history
 func BenchmarkParseTradeHistoryGeneric(b *testing.B) {
 	data, err := os.ReadFile("testdata/trade_history.bin")
