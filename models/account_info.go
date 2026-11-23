@@ -552,22 +552,6 @@ func (ai *AccountInfo) ParseFromBytes(b []byte) error {
 	return nil
 }
 
-func readRecordCount(body []byte, offset, recordSize int, name string) (int, int, error) {
-	if recordSize <= 0 {
-		return 0, offset, fmt.Errorf("invalid %s record size %d", name, recordSize)
-	}
-	if offset < 0 || offset > len(body) || len(body)-offset < 4 {
-		return 0, offset, fmt.Errorf("buffer too short for %s count", name)
-	}
-	count := binary.LittleEndian.Uint32(body[offset : offset+4])
-	offset += 4
-	remainingRecords := (len(body) - offset) / recordSize
-	if uint64(count) > uint64(remainingRecords) {
-		return 0, offset, fmt.Errorf("buffer too short for %s: count %d exceeds available records %d", name, count, remainingRecords)
-	}
-	return int(count), offset, nil
-}
-
 func parseFloat64ArrayWithOffset(b []byte, offset int) (interface{}, error) {
 	if offset < 0 || offset >= len(b) {
 		return nil, fmt.Errorf("offset %d out of bounds for byte slice of length %d", offset, len(b))

@@ -132,6 +132,14 @@ func GetSeriesSize(fields []Field) (int, error) {
 			} else {
 				return 0, fmt.Errorf("expected []byte for PropType 12, got %T", f.PropValue)
 			}
+		case 13:
+			if f.PropLength > 0 {
+				size += f.PropLength
+			} else if b, ok := f.PropValue.([]byte); ok {
+				size += len(b)
+			} else {
+				return 0, fmt.Errorf("expected []byte for PropType 13, got %T", f.PropValue)
+			}
 		default:
 			return 0, fmt.Errorf("unsupported PropType: %d", f.PropType)
 		}

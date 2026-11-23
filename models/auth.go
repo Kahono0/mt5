@@ -1,0 +1,77 @@
+package models
+
+import (
+	"github.com/kahono0/mt5/internal/ec"
+	"github.com/kahono0/mt5/internal/mthelpers"
+)
+
+func emptyBuffer(length int) []byte {
+	return make([]byte, length)
+}
+
+// GenerateLoginFields creates the same field list as in JS
+func GenerateLoginFields(server, password string, login uint64, deviceID string) []ec.Field {
+	urlLength := uint32(len(server))
+	devID := mthelpers.DeviceIDFromString(deviceID)
+	fields := []ec.Field{
+		{PropType: 6, PropValue: uint32(0)},                          // 1. Int | value: 0
+		{PropType: 11, PropValue: password, PropLength: 64},          // 2. String | password
+		{PropType: 11, PropValue: "", PropLength: 128},               // 3. String | ""
+		{PropType: 12, PropValue: devID, PropLength: 16},             // 4. Bytes | len 16
+		{PropType: 11, PropValue: "", PropLength: 64},                // 5. String | ""
+		{PropType: 11, PropValue: "", PropLength: 64},                // 6. String | ""
+		{PropType: 18, PropValue: uint64(0)},                         // 7. BigInt | 0
+		{PropType: 11, PropValue: "", PropLength: 128},               // 8. String | ""
+		{PropType: 6, PropValue: urlLength},                          // 9. Int | 18
+		{PropType: 11, PropValue: server, PropLength: 256},           // 10. String
+		{PropType: 18, PropValue: login},                             // 11. BigInt | login id
+		{PropType: 12, PropValue: emptyBuffer(160), PropLength: 160}, // 12. Bytes | len 160
+		{PropType: 18, PropValue: uint64(0)},                         // 13. BigInt | session = 0
+	}
+	return fields
+}
+
+type LoginRequest struct {
+	AccountID uint64
+	Password  string
+	ServerURL string
+	DeviceID  string
+}
+
+var LoginRequestProps = []ec.Field{
+	{PropType: 6},
+	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: 128},
+	{PropType: 12, PropLength: 16},
+	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: 64},
+	{PropType: 18},
+	{PropType: 11, PropLength: 128},
+	{PropType: 6},
+	{PropType: 11, PropLength: 256},
+	{PropType: 18},
+	{PropType: 12, PropLength: 160},
+	{PropType: 18},
+}
+
+var LoginRequestSize, _ = ec.GetSeriesSize(LoginRequestProps)
+
+func (lr *LoginRequest) Serialize() ([]byte, error) {
+	w := newRecordWriter(LoginRequestSize)
+	w.writeUint32(0) // 1. Int | value: 0
+	w.writeUTF16(lr.Password, 64)
+	w.writeUTF16("", 128)
+	deviceIDBytes := mthelpers.DeviceIDFromString(lr.DeviceID)
+	w.writeBytes(deviceIDBytes, 16)
+	w.writeUTF16("", 64)
+	w.writeUTF16("", 64)
+	w.writeUint64(0) // 7. BigInt | 0
+	w.writeUTF16("", 128)
+	w.writeUint32(uint32(len(lr.ServerURL))) // 9. Int | 18
+	w.writeUTF16(lr.ServerURL, 256)
+	w.writeUint64(lr.AccountID) // 11. BigInt | login id
+	w.writeBytes(emptyBuffer(160), 160)
+	w.writeUint64(0) // 13. BigInt | session = 0
+
+	return w.finish()
+}

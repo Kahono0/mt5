@@ -30,3 +30,28 @@ func GenerateLoginFields(server, password string, login uint64, deviceID string)
 	}
 	return fields
 }
+
+type LoginRequest struct {
+	Login    uint64
+	Password string
+	Server   string
+	DeviceID string
+}
+
+var LoginRequestProps = []ec.Field{
+	{PropType: 6},
+	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: 128},
+	{PropType: 12, PropLength: 16},
+	{PropType: 11, PropLength: 64},
+	{PropType: 11, PropLength: 64},
+	{PropType: 18},
+	{PropType: 11, PropLength: 128},
+	{PropType: 6},
+	{PropType: 11, PropLength: 256},
+	{PropType: 18},
+	{PropType: 12, PropLength: 160},
+	{PropType: 18},
+}
+
+var LoginRequestSize, _ = ec.GetSeriesSize(LoginRequestProps)

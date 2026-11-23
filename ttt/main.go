@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kahono0/mt5"
+	"github.com/kahono0/mt5/models"
 )
 
 var masterConfig = mt5.AppConfig{
@@ -54,6 +55,10 @@ func main() {
 		}
 	}()
 
+	client.RegisterTransactionEventHandler(func(event *models.EnvelopeTransaction) {
+		fmt.Println("Transaction Event: ", asPrettyJSON(event))
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -69,7 +74,6 @@ func main() {
 	}
 
 	log.Printf("Account info: %s", accountInfo.Core.AccountName)
-	fmt.Println(asPrettyJSON(accountInfo))
 
 	openPositions, err := client.GetOpenPositions(context.Background())
 	if err != nil {

@@ -69,9 +69,9 @@ func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts 
 	}
 
 	return c.RegisterHandler(CommandRequestAccountInfo, func(msg Message) error {
-		info, err := parseAccountInfo(msg.Body)
-		if err != nil {
-			return err
+		info := &models.AccountInfo{}
+		if err := info.ParseFromBytes(msg.Body); err != nil {
+			return fmt.Errorf("failed to parse account info: %w", err)
 		}
 		handler(info, msg)
 		return nil

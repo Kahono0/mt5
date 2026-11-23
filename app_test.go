@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/kahono0/mt5/models"
 )
 
 func validAppConfig() AppConfig {
@@ -64,7 +66,13 @@ func TestWaitUntilAuthenticatedHonorsContext(t *testing.T) {
 }
 
 func TestLoginRequestSerializes(t *testing.T) {
-	body, err := buildLoginRequest("server.example.com", "secret", 12345, "device-1")
+	loginReq := &models.LoginRequest{
+		ServerURL: "server.example.com",
+		Password:  "secret",
+		AccountID: 12345,
+		DeviceID:  "device-1",
+	}
+	body, err := loginReq.Serialize()
 	if err != nil {
 		t.Fatalf("unexpected serialize error: %v", err)
 	}

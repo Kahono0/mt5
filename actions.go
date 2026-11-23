@@ -4,8 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/kahono0/mt5/internal/ec"
-	"github.com/kahono0/mt5/internal/login"
+	"github.com/kahono0/mt5/models"
 )
 
 // SendCommand sends a raw command through the underlying [Client].
@@ -17,7 +16,13 @@ func (c *AppClient) SendCommand(command uint16, body []byte) error {
 // automatically after the session key is loaded, but can be called
 // manually if needed.
 func (c *AppClient) Login() error {
-	body, err := buildLoginRequest(c.cfg.ServerURL, c.cfg.Password, c.cfg.AccountID, c.cfg.DeviceID)
+	loginRequest := models.LoginRequest{
+		ServerURL: c.cfg.ServerURL,
+		Password:  c.cfg.Password,
+		AccountID: c.cfg.AccountID,
+		DeviceID:  c.cfg.DeviceID,
+	}
+	body, err := loginRequest.Serialize()
 	if err != nil {
 		return err
 	}
@@ -52,17 +57,4 @@ func BuildTickSubscriptionPayload(symbolIDs []uint32) []byte {
 		offset += 4
 	}
 	return buf
-}
-
-func buildLoginRequest(
-	serverURL, password string,
-	accountID uint64,
-	deviceID string,
-) ([]byte, error) {
-	fields := login.GenerateLoginFields(serverURL, password, accountID, deviceID)
-	body, err := ec.Serialize(fields)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize login fields: %w", err)
-	}
-	return body, nil
 }
