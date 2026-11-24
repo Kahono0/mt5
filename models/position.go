@@ -1,6 +1,9 @@
 package models
 
 import (
+	"encoding/binary"
+	"fmt"
+
 	"github.com/kahono0/mt5/internal/ec"
 )
 
@@ -137,4 +140,31 @@ func (p *Position) ParseFromBytes(buf []byte) error {
 	p.TimeUpdate = uint64(timeUpdate)*1000 + uint64(p.TimeSubSecondsU)
 
 	return nil
+}
+
+func ParsePositionsFromBytes(buf []byte) ([]*Position, error) {
+	if len(buf) < 4 {
+		return nil, fmt.Errorf("buffer too short to read positions count")
+	}
+
+	count := binary.LittleEndian.Uint32(buf[0:4])
+	offset := 4
+
+	positions := make([]*Position, count)
+
+	for i := uint32(0); i < count; i++ {
+		if offset+PositionPropsSize > len(buf) {
+			return nil, fmt.Errorf("buffer too short to read position at index %d", i)
+		}
+
+		position := &Position{}
+		if err := position.ParseFromBytes(buf[offset : offset+PositionPropsSize]); err != nil {
+			return nil, fmt.Errorf("failed to parse position at index %d: %v", i, err)
+		}
+
+		positions[i] = position
+		offset += PositionPropsSize
+	}
+
+	return positions, nil
 }
