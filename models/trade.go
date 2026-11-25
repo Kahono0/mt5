@@ -16,7 +16,7 @@ type TradeRequest struct {
 	TypeFilling    uint32
 	TypeTime       uint32
 	TypeFlags      uint32
-	TypeReason     int
+	TypeReason     uint32
 	PriceOrder     float64
 	PriceTrigger   float64
 	PriceSL        float64
@@ -27,7 +27,7 @@ type TradeRequest struct {
 	Comment        string
 	TradePosition  uint64
 	PositionBy     uint64
-	TimeExpiration int
+	TimeExpiration uint32
 }
 
 // ToFields converts a TradeRequest into a slice of Fields

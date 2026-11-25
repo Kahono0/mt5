@@ -32,8 +32,9 @@ type Position struct {
 	DigitsCurrency   uint32
 	TradeReason      uint32
 	ExternalID       string
-	TimeSubSecondsC  int32 // i[24] in JS
-	TimeSubSecondsU  int32 // i[25] in JS
+
+	//TimeSubSecondsC  int32 // i[24] in JS
+	//TimeSubSecondsU  int32 // i[25] in JS
 }
 
 var PositionFields = []ec.Field{
@@ -97,16 +98,14 @@ func (p Position) FromValues(values []interface{}) interface{} {
 		DigitsCurrency:   values[21].(uint32),
 		TradeReason:      values[22].(uint32),
 		ExternalID:       values[23].(string),
-		TimeSubSecondsC:  values[24].(int32),
-		TimeSubSecondsU:  values[25].(int32),
 	}
 }
 
 func (p *Position) ParseFromBytes(buf []byte) error {
 	r := recordReader{buf: buf}
 
-	p.PositionID = int64(r.readUint64())
-	p.TradeOrder = int64(r.readUint64())
+	p.PositionID = r.readInt64()
+	p.TradeOrder = r.readInt64()
 	timeCreate := r.readUint32()
 	timeUpdate := r.readUint32()
 	p.TradeSymbol = r.readString(64)
@@ -121,23 +120,23 @@ func (p *Position) ParseFromBytes(buf []byte) error {
 	p.RateMargin = r.readFloat64()
 	p.Commission = r.readFloat64()
 	p.Storage = r.readFloat64()
-	p.Expert = int64(r.readUint64())
-	p.ExpertPositionID = int64(r.readUint64())
+	p.Expert = r.readInt64()
+	p.ExpertPositionID = r.readInt64()
 	p.Comment = r.readString(64)
 	p.ContractSize = r.readFloat64()
 	p.Digits = r.readUint32()
 	p.DigitsCurrency = r.readUint32()
 	p.TradeReason = r.readUint32()
 	p.ExternalID = r.readString(64)
-	p.TimeSubSecondsC = r.readInt32()
-	p.TimeSubSecondsU = r.readInt32()
+	timeSubSecondsC := r.readInt32()
+	timeSubSecondsU := r.readInt32()
 
 	if err := r.finish(); err != nil {
 		return err
 	}
 
-	p.TimeCreate = uint64(timeCreate)*1000 + uint64(p.TimeSubSecondsC)
-	p.TimeUpdate = uint64(timeUpdate)*1000 + uint64(p.TimeSubSecondsU)
+	p.TimeCreate = uint64(timeCreate)*1000 + uint64(timeSubSecondsC)
+	p.TimeUpdate = uint64(timeUpdate)*1000 + uint64(timeSubSecondsU)
 
 	return nil
 }

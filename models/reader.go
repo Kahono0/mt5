@@ -65,6 +65,10 @@ func (r *recordReader) readUint64() uint64 {
 	return binary.LittleEndian.Uint64(buf)
 }
 
+func (r *recordReader) readInt64() int64 {
+	return int64(r.readUint64())
+}
+
 func (r *recordReader) readFloat64() float64 {
 	return math.Float64frombits(r.readUint64())
 }

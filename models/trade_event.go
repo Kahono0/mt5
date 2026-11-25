@@ -24,9 +24,13 @@ type TradeEventRequest struct {
 	TradeOrder     int64
 	TradeType      uint32
 	TypeFilling    uint32
+	TypeTime       uint32
 	TypeFlags      uint32
+	TypeReason     uint32
 	Comment        string
+	TradePosition  uint64
 	PositionBy     uint64
+	TimeExpiration uint32
 	SendTime       int
 	Login          uint64
 	Complete       bool
@@ -66,12 +70,12 @@ func (ter *TradeEventRequest) ParseFromBytes(b []byte) error {
 	ter.TradeSymbol = r.readString(64)
 	ter.TradeVolume = r.readUint64()
 	ter.Digits = r.readUint32()
-	ter.TradeOrder = int64(r.readUint64())
+	ter.TradeOrder = r.readInt64()
 	ter.TradeType = r.readUint32()
 	ter.TypeFilling = r.readUint32()
-	_ = r.readUint32() // TypeTime, not used
+	ter.TypeTime = r.readUint32()
 	ter.TypeFlags = r.readUint32()
-	_ = r.readInt32() // TypeReason, not used
+	ter.TypeReason = r.readUint32()
 	ter.PriceOrder = r.readFloat64()
 	ter.PriceTrigger = r.readFloat64()
 	ter.PriceSL = r.readFloat64()
@@ -80,9 +84,9 @@ func (ter *TradeEventRequest) ParseFromBytes(b []byte) error {
 	ter.PriceTop = r.readFloat64()
 	ter.PriceBottom = r.readFloat64()
 	ter.Comment = r.readString(64)
+	ter.TradePosition = r.readUint64()
 	ter.PositionBy = r.readUint64()
-	_ = r.readUint64() // Position, not used
-	_ = r.readInt32()  // TimeExpiration, not used
+	ter.TimeExpiration = r.readUint32()
 
 	return r.finish()
 }
@@ -118,9 +122,12 @@ var TradeResultSize, _ = ec.GetSeriesSize(TradeResultProps)
 func (tr *TradeResult) ParseFromBytes(b []byte) error {
 	r := recordReader{buf: b}
 	tr.Retcode = enums.TradeReturnCode(r.readUint32())
-	tr.Deal = int64(r.readUint64())
-	tr.TradeOrder = int64(r.readUint64())
-	tr.Volume = int64(r.readUint64())
+	//tr.Deal = int64(r.readUint64())
+	//tr.TradeOrder = int64(r.readUint64())
+	//tr.Volume = int64(r.readUint64())
+	tr.Deal = r.readInt64()
+	tr.TradeOrder = r.readInt64()
+	tr.Volume = r.readInt64()
 	tr.Price = r.readFloat64()
 	tr.ResTime = r.readUint32()
 	tr.Bid = r.readFloat64()
