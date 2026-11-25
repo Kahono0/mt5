@@ -7,6 +7,8 @@ import (
 	"github.com/kahono0/mt5/models"
 )
 
+type Position = models.Position
+
 // RequestOpenPositions sends a request for open positions.
 // The client must be authenticated.
 func (c *AppClient) RequestOpenPositions() error {
@@ -19,7 +21,7 @@ func (c *AppClient) RequestOpenPositions() error {
 	return nil
 }
 
-type PositionsHandler func(positions []*models.Position)
+type PositionsHandler func(positions []*Position)
 
 func (c *AppClient) RegisterPositionsHandler(handler PositionsHandler, opts ...HandlerOption) func() {
 	if handler == nil {
@@ -37,19 +39,19 @@ func (c *AppClient) RegisterPositionsHandler(handler PositionsHandler, opts ...H
 	}, opts...)
 }
 
-func (c *AppClient) GetOpenPositions(ctx context.Context) ([]*models.Position, error) {
+func (c *AppClient) GetOpenPositions(ctx context.Context) ([]*Position, error) {
 	if !c.IsAuthenticated() {
 		return nil, ErrNotAuthenticated
 	}
 
 	type result struct {
-		positions []*models.Position
+		positions []*Position
 		err       error
 	}
 
 	ch := make(chan result, 1)
 
-	cancel := c.RegisterPositionsHandler(func(positions []*models.Position) {
+	cancel := c.RegisterPositionsHandler(func(positions []*Position) {
 		ch <- result{positions: positions, err: nil}
 	}, WithErrorHandler(func(err error) {
 		ch <- result{positions: nil, err: err}

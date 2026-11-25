@@ -1,12 +1,13 @@
 package models
 
 import (
+	"github.com/kahono0/mt5/enums"
 	"github.com/kahono0/mt5/internal/ec"
 )
 
 type TradeRequest struct {
 	ActionID       uint32
-	TradeAction    TradeAction
+	TradeAction    enums.TradeAction
 	TradeSymbol    string
 	TradeVolume    uint64
 	Digits         uint32

@@ -81,6 +81,7 @@ func main() {
 	}
 
 	log.Printf("Open positions: %v", openPositions)
+	fmt.Println("Open positions: ", asPrettyJSON(openPositions))
 
 	//now := time.Now()
 	//from := now.Add(-72 * time.Hour)

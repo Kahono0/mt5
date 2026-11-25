@@ -39,7 +39,6 @@ func (o Order) Fields() []ec.Field {
 }
 
 func (o Order) FromValuesOrder(parsed []interface{}) any {
-	// adjust times like in JS version
 	parsed[3] = int64(parsed[3].(uint32))*1000 + int64(parsed[28].(int32))
 	parsed[4] = int64(parsed[4].(uint32)) * 1000
 	parsed[5] = int64(parsed[5].(uint32))*1000 + int64(parsed[29].(int32))

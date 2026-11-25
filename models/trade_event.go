@@ -4,35 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/kahono0/mt5/enums"
 	"github.com/kahono0/mt5/internal/ec"
-)
-
-type ReturnCode uint32
-
-const (
-	TRADE_RETCODE_REQUOTE        ReturnCode = 10004 // Requote
-	TRADE_RETCODE_REJECT         ReturnCode = 10006 // Request rejected
-	TRADE_RETCODE_CANCEL         ReturnCode = 10007 // Request canceled by trader
-	TRADE_RETCODE_PLACED         ReturnCode = 10008 // Order placed
-	TRADE_RETCODE_DONE           ReturnCode = 10009 // Request completed
-	TRADE_RETCODE_DONE_PARTIAL   ReturnCode = 10010 // Only part of the request was completed
-	TRADE_RETCODE_ERROR          ReturnCode = 10011 // Request processing error
-	TRADE_RETCODE_TIMEOUT        ReturnCode = 10012 // Request canceled by timeout
-	TRADE_RETCODE_INVALID        ReturnCode = 10013 // Invalid request
-	TRADE_RETCODE_INVALID_VOLUME ReturnCode = 10014 // Invalid volume in the request
-	TRADE_RETCODE_INVALID_PRICE  ReturnCode = 10015 // Invalid price in the request
-	TRADE_RETCODE_INVALID_STOPS  ReturnCode = 10016 // Invalid stops in the request
-)
-
-type TradeAction uint32
-
-const (
-	TRADE_ACTION_DEAL     TradeAction = 3
-	TRADE_ACTION_PENDING  TradeAction = 4
-	TRADE_ACTION_SLTP     TradeAction = 5
-	TRADE_ACTION_MODIFY   TradeAction = 6
-	TRADE_ACTION_REMOVE   TradeAction = 7
-	TRADE_ACTION_CLOSE_BY TradeAction = 8
 )
 
 type TradeEventRequest struct {
@@ -45,7 +18,7 @@ type TradeEventRequest struct {
 	PriceTop       float64
 	PriceBottom    float64
 	ActionID       uint32
-	TradeAction    TradeAction
+	TradeAction    enums.TradeAction
 	TradeSymbol    string
 	Digits         uint32
 	TradeOrder     int64
@@ -89,7 +62,7 @@ var TradeEventRequestSize, _ = ec.GetSeriesSize(TradeEventRequestProps)
 func (ter *TradeEventRequest) ParseFromBytes(b []byte) error {
 	r := recordReader{buf: b}
 	ter.ActionID = r.readUint32()
-	ter.TradeAction = TradeAction(r.readUint32())
+	ter.TradeAction = enums.TradeAction(r.readUint32())
 	ter.TradeSymbol = r.readString(64)
 	ter.TradeVolume = r.readUint64()
 	ter.Digits = r.readUint32()
@@ -115,7 +88,7 @@ func (ter *TradeEventRequest) ParseFromBytes(b []byte) error {
 }
 
 type TradeResult struct {
-	Retcode    ReturnCode
+	Retcode    enums.TradeReturnCode
 	Deal       int64
 	TradeOrder int64
 	Volume     int64
@@ -144,7 +117,7 @@ var TradeResultSize, _ = ec.GetSeriesSize(TradeResultProps)
 
 func (tr *TradeResult) ParseFromBytes(b []byte) error {
 	r := recordReader{buf: b}
-	tr.Retcode = ReturnCode(r.readUint32())
+	tr.Retcode = enums.TradeReturnCode(r.readUint32())
 	tr.Deal = int64(r.readUint64())
 	tr.TradeOrder = int64(r.readUint64())
 	tr.Volume = int64(r.readUint64())
