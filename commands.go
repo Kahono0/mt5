@@ -16,7 +16,6 @@ const (
 
 const (
 	CommandTickUpdate       uint16 = 8
-	CommandOrderPosition    uint16 = 10
 	CommandTransactionEvent uint16 = 10
 
 	CommandSubmitTrade  uint16 = 12

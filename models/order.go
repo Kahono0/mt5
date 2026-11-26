@@ -1,6 +1,9 @@
 package models
 
-import "github.com/kahono0/mt5/internal/ec"
+import (
+	"github.com/kahono0/mt5/enums"
+	"github.com/kahono0/mt5/internal/ec"
+)
 
 type Order struct {
 	TradeOrder        int64
@@ -9,7 +12,7 @@ type Order struct {
 	TimeSetup         uint64
 	TimeExpiration    uint64
 	TimeDone          uint64
-	OrderType         uint32
+	OrderType         enums.OrderType
 	TypeFilling       uint32
 	TypeTime          uint32
 	TypeReason        uint32
@@ -85,7 +88,7 @@ func (o Order) FromValuesOrder(parsed []interface{}) any {
 		TimeSetup:         parsed[3].(uint64),
 		TimeExpiration:    parsed[4].(uint64),
 		TimeDone:          parsed[5].(uint64),
-		OrderType:         parsed[6].(uint32),
+		OrderType:         enums.OrderType(parsed[6].(uint32)),
 		TypeFilling:       parsed[7].(uint32),
 		TypeTime:          parsed[8].(uint32),
 		TypeReason:        parsed[9].(uint32),
@@ -122,7 +125,7 @@ func (o *Order) ParseFromBytes(buf []byte) error {
 	timeSetup := r.readUint32()
 	timeExpiration := r.readUint32()
 	timeDone := r.readUint32()
-	o.OrderType = r.readUint32()
+	o.OrderType = enums.OrderType(r.readUint32())
 	o.TypeFilling = r.readUint32()
 	o.TypeTime = r.readUint32()
 	o.TypeReason = r.readUint32()

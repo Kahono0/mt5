@@ -22,7 +22,7 @@ type TradeEventRequest struct {
 	TradeSymbol    string
 	Digits         uint32
 	TradeOrder     int64
-	TradeType      uint32
+	OrderType      enums.OrderType
 	TypeFilling    uint32
 	TypeTime       uint32
 	TypeFlags      uint32
@@ -71,7 +71,7 @@ func (ter *TradeEventRequest) ParseFromBytes(b []byte) error {
 	ter.TradeVolume = r.readUint64()
 	ter.Digits = r.readUint32()
 	ter.TradeOrder = r.readInt64()
-	ter.TradeType = r.readUint32()
+	ter.OrderType = enums.OrderType(r.readUint32())
 	ter.TypeFilling = r.readUint32()
 	ter.TypeTime = r.readUint32()
 	ter.TypeFlags = r.readUint32()
@@ -122,9 +122,6 @@ var TradeResultSize, _ = ec.GetSeriesSize(TradeResultProps)
 func (tr *TradeResult) ParseFromBytes(b []byte) error {
 	r := recordReader{buf: b}
 	tr.Retcode = enums.TradeReturnCode(r.readUint32())
-	//tr.Deal = int64(r.readUint64())
-	//tr.TradeOrder = int64(r.readUint64())
-	//tr.Volume = int64(r.readUint64())
 	tr.Deal = r.readInt64()
 	tr.TradeOrder = r.readInt64()
 	tr.Volume = r.readInt64()

@@ -12,7 +12,7 @@ type TradeRequest struct {
 	TradeVolume    uint64
 	Digits         uint32
 	TradeOrder     int64
-	TradeType      uint32
+	OrderType      uint32
 	TypeFilling    uint32
 	TypeTime       uint32
 	TypeFlags      uint32
@@ -39,7 +39,7 @@ func (t *TradeRequest) ToFields() []ec.Field {
 		{PropType: 18, PropValue: t.TradeVolume},
 		{PropType: 6, PropValue: t.Digits},
 		{PropType: 18, PropValue: t.TradeOrder},
-		{PropType: 6, PropValue: t.TradeType},
+		{PropType: 6, PropValue: t.OrderType},
 		{PropType: 6, PropValue: t.TypeFilling},
 		{PropType: 6, PropValue: t.TypeTime},
 		{PropType: 6, PropValue: t.TypeFlags},
@@ -93,11 +93,11 @@ func (tr *TradeRequest) Serialize() ([]byte, error) {
 	w.writeUint64(tr.TradeVolume)
 	w.writeUint32(tr.Digits)
 	w.writeInt64(tr.TradeOrder)
-	w.writeUint32(tr.TradeType)
+	w.writeUint32(tr.OrderType)
 	w.writeUint32(tr.TypeFilling)
 	w.writeUint32(tr.TypeTime)
 	w.writeUint32(tr.TypeFlags)
-	w.writeInt32(int32(tr.TypeReason))
+	w.writeUint32(tr.TypeReason)
 	w.writeFloat64(tr.PriceOrder)
 	w.writeFloat64(tr.PriceTrigger)
 	w.writeFloat64(tr.PriceSL)

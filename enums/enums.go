@@ -27,3 +27,17 @@ const (
 	TRADE_ACTION_REMOVE   TradeAction = 7
 	TRADE_ACTION_CLOSE_BY TradeAction = 8
 )
+
+type OrderType uint32
+
+const (
+	ORDER_TYPE_BUY             OrderType = 0
+	ORDER_TYPE_SELL            OrderType = 1
+	ORDER_TYPE_BUY_LIMIT       OrderType = 2
+	ORDER_TYPE_SELL_LIMIT      OrderType = 3
+	ORDER_TYPE_BUY_STOP        OrderType = 4
+	ORDER_TYPE_SELL_STOP       OrderType = 5
+	ORDER_TYPE_BUY_STOP_LIMIT  OrderType = 6
+	ORDER_TYPE_SELL_STOP_LIMIT OrderType = 7
+	ORDER_TYPE_CLOSE_BY        OrderType = 8
+)
