@@ -345,9 +345,6 @@ func (c *Client) Close() error {
 	return c.closeConn()
 }
 
-var i int
-var tt time.Duration
-
 func (c *Client) readLoop(ctx context.Context) error {
 	for {
 		select {
@@ -401,13 +398,7 @@ func (c *Client) readLoop(ctx context.Context) error {
 			continue
 		}
 
-		st := time.Now()
 		c.dispatch(msg)
-		tt += time.Since(st)
-		i++
-		if i%100 == 0 {
-			fmt.Printf("avg dispatch time: %v\n", tt/time.Duration(i))
-		}
 	}
 }
 
