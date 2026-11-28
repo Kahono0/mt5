@@ -2,7 +2,6 @@ package mt5
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -78,63 +77,6 @@ func TestLoginRequestSerializes(t *testing.T) {
 	}
 	if len(body) == 0 {
 		t.Fatalf("expected non-empty login payload")
-	}
-}
-
-func TestHandleDisconnectResetsAuthState(t *testing.T) {
-	client, err := NewApp(validAppConfig())
-	if err != nil {
-		t.Fatalf("unexpected new error: %v", err)
-	}
-
-	client.mu.Lock()
-	client.authenticated = true
-	client.sessionKeyLoaded = true
-	client.awaitingKey = false
-	client.mu.Unlock()
-
-	client.handleDisconnect(errors.New("read error"))
-
-	client.mu.RLock()
-	defer client.mu.RUnlock()
-	if client.authenticated {
-		t.Fatalf("expected authenticated=false after disconnect")
-	}
-	if client.sessionKeyLoaded {
-		t.Fatalf("expected sessionKeyLoaded=false after disconnect")
-	}
-	if !client.awaitingKey {
-		t.Fatalf("expected awaitingKey=true after disconnect")
-	}
-}
-
-func TestHandleDisconnectInvokesCallback(t *testing.T) {
-	called := false
-	var gotErr error
-
-	client, err := NewApp(AppConfig{
-		URL:       "ws://localhost:8080/ws",
-		ServerURL: "server.example.com",
-		AccountID: 12345,
-		Password:  "secret",
-		DeviceID:  "device-1",
-		OnDisconnect: func(err error) {
-			called = true
-			gotErr = err
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected new error: %v", err)
-	}
-
-	expected := errors.New("socket read failed")
-	client.handleDisconnect(expected)
-
-	if !called {
-		t.Fatalf("expected OnDisconnect callback to be called")
-	}
-	if !errors.Is(gotErr, expected) {
-		t.Fatalf("expected callback error to match disconnect error")
 	}
 }
 

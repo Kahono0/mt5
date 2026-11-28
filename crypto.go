@@ -18,6 +18,7 @@ type Crypto interface {
 	Decrypt(cipherText []byte) ([]byte, error)
 	SetKey(key []byte) error
 	SetKeyFromString(key string) error
+	ResetKey()
 }
 
 // Codec defines the interface for encoding commands, framing packets, and
@@ -32,8 +33,9 @@ type Codec interface {
 // DefaultCrypto implements the [Crypto] interface using AES-CBC encryption
 // with the standard MT5 key derivation scheme.
 type DefaultCrypto struct {
-	mu    sync.RWMutex
-	block cipher.Block
+	mu           sync.RWMutex
+	block        cipher.Block
+	defaultBlock cipher.Block
 }
 
 // NewDefaultCrypto creates a [DefaultCrypto] initialized with the given
@@ -44,7 +46,7 @@ func NewDefaultCrypto(obfuscatedKey string) (*DefaultCrypto, error) {
 		return nil, err
 	}
 
-	return &DefaultCrypto{block: block}, nil
+	return &DefaultCrypto{block: block, defaultBlock: block}, nil
 }
 
 // Encrypt encrypts plain using AES-CBC with zero IV.
@@ -84,6 +86,13 @@ func (c *DefaultCrypto) SetKey(key []byte) error {
 	c.block = block
 	c.mu.Unlock()
 	return nil
+}
+
+// ResetKey resets the encryption key to the default MT5 key.
+func (c *DefaultCrypto) ResetKey() {
+	c.mu.Lock()
+	c.block = c.defaultBlock
+	c.mu.Unlock()
 }
 
 // SetKeyFromString replaces the encryption key by decoding an obfuscated

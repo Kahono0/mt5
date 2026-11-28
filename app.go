@@ -48,8 +48,10 @@ type AppConfig struct {
 	SkipCommands map[uint16]bool
 	// PingInterval controls how often heartbeat pings are sent.
 	PingInterval time.Duration
-	// PingCommand is the command ID used for heartbeat pings.
-	PingCommand uint16
+	// PingTimeout is the maximum time to wait for a ping acknowledgment.
+	// Defaults to 30 seconds.
+	// If a ping is not acknowledged within this time, the client will consider the connection lost and attempt to reconnect.
+	PingTimeout time.Duration
 	// ReconnectBackoff is the delay between reconnection attempts.
 	ReconnectBackoff time.Duration
 	// ReconnectMaxAttempts limits reconnection attempts.
@@ -74,12 +76,7 @@ type AppClient struct {
 	cfg  AppConfig
 	core *Client
 
-	mu               sync.RWMutex
-	authenticated    bool
-	sessionKeyLoaded bool
-	awaitingKey      bool
-
-	initHandlersOnce sync.Once
+	mu sync.RWMutex
 }
 
 // NewApp creates a new [AppClient] with the given configuration. It
@@ -105,17 +102,23 @@ func NewApp(cfg AppConfig) (*AppClient, error) {
 	if cfg.SessionKeyOffset <= 0 {
 		cfg.SessionKeyOffset = defaultSessionKeyOffset
 	}
-	if cfg.PingCommand == 0 {
-		cfg.PingCommand = CommandPing
-	}
 
 	core, err := New(Config{
-		URL:                  cfg.URL,
+		URL:       cfg.URL,
+		AccountID: cfg.AccountID,
+		ServerURL: cfg.ServerURL,
+		Password:  cfg.Password,
+		DeviceID:  cfg.DeviceID,
+
+		SessionKeyOffset: cfg.SessionKeyOffset,
+		KeyExtractor:     cfg.KeyExtractor,
+		SessionKeyBody:   cfg.SessionKeyBody,
+
 		Dialer:               cfg.Dialer,
 		RequestHeader:        cfg.RequestHeader,
 		SkipCommands:         cfg.SkipCommands,
 		PingInterval:         cfg.PingInterval,
-		PingCommand:          cfg.PingCommand,
+		PingTimeout:          cfg.PingTimeout,
 		ReconnectBackoff:     cfg.ReconnectBackoff,
 		ReconnectMaxAttempts: cfg.ReconnectMaxAttempts,
 		AutoRequestKey:       true,
@@ -129,11 +132,9 @@ func NewApp(cfg AppConfig) (*AppClient, error) {
 	}
 
 	c := &AppClient{
-		cfg:         cfg,
-		core:        core,
-		awaitingKey: true,
+		cfg:  cfg,
+		core: core,
 	}
-	c.initInternalHandlers()
 	return c, nil
 }
 
@@ -150,12 +151,6 @@ func (c *AppClient) Cfg() AppConfig {
 // Start connects to the server and runs the read loop. It blocks until
 // the context is cancelled or the client is closed.
 func (c *AppClient) Start(ctx context.Context) error {
-	c.mu.Lock()
-	c.awaitingKey = true
-	c.sessionKeyLoaded = false
-	c.authenticated = false
-	c.mu.Unlock()
-
 	return c.core.Run(ctx)
 }
 
@@ -164,25 +159,11 @@ func (c *AppClient) Close() error {
 	return c.core.Close()
 }
 
-//// Messages returns a read-only channel of dispatched messages.
-//func (c *AppClient) Messages() <-chan Message {
-//	return c.core.Messages()
-//}
-//
-//// Errors returns a read-only channel of non-fatal errors.
-//func (c *AppClient) Errors() <-chan error {
-//	return c.core.Errors()
-//}
-
 // RegisterHandler registers a handler for a specific command ID on the
 // underlying [Client]. Use [WithErrorHandler] to route errors from this
 // handler to a dedicated callback. Returns a function that, when called,
 // removes the handler.
-func (c *AppClient) RegisterHandler(
-	command uint16,
-	handler MessageHandler,
-	opts ...HandlerOption,
-) func() {
+func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
 	return c.core.On(command, handler, opts...)
 }
 
@@ -197,24 +178,7 @@ func (c *AppClient) RegisterAnyHandler(handler MessageHandler, opts ...HandlerOp
 // IsAuthenticated reports whether the client has completed the login
 // handshake.
 func (c *AppClient) IsAuthenticated() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.authenticated
-}
-
-// SetUnauthenticated forces the authentication state to false.
-func (c *AppClient) SetUnauthenticated() {
-	c.mu.Lock()
-	c.authenticated = false
-	c.mu.Unlock()
-}
-
-// IsSessionKeyLoaded reports whether a session key has been extracted
-// from the server handshake.
-func (c *AppClient) IsSessionKeyLoaded() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.sessionKeyLoaded
+	return c.core.IsAuthenticated()
 }
 
 // WaitUntilAuthenticated blocks until the client is authenticated or
@@ -224,7 +188,7 @@ func (c *AppClient) WaitUntilAuthenticated(ctx context.Context) error {
 	defer ticker.Stop()
 
 	for {
-		if c.IsAuthenticated() {
+		if c.core.IsAuthenticated() {
 			return nil
 		}
 
@@ -233,111 +197,5 @@ func (c *AppClient) WaitUntilAuthenticated(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 		}
-	}
-}
-
-func (c *AppClient) initInternalHandlers() {
-	c.initHandlersOnce.Do(func() {
-		c.core.OnAny(c.handleSessionKeyMessage)
-		c.core.On(CommandLogin, c.handleLoginAck)
-		c.core.On(CommandLoginSuccess, c.handleLoginSuccess)
-	})
-}
-
-func (c *AppClient) handleSessionKeyMessage(msg Message) error {
-	c.mu.RLock()
-	awaiting := c.awaitingKey
-	loaded := c.sessionKeyLoaded
-	c.mu.RUnlock()
-
-	if !awaiting && msg.Command != CommandRequestSessionKey {
-		return nil
-	}
-
-	if loaded && msg.Command != CommandRequestSessionKey {
-		return nil
-	}
-
-	keyBytes, err := c.extractSessionKey(msg)
-	if err != nil {
-		if msg.Command == CommandRequestSessionKey {
-			return err
-		}
-		return nil
-	}
-
-	if err := c.core.SetSessionKey(keyBytes); err != nil {
-		return fmt.Errorf("failed to set session key: %w", err)
-	}
-
-	c.mu.Lock()
-	c.sessionKeyLoaded = true
-	c.awaitingKey = false
-	c.authenticated = false
-	c.mu.Unlock()
-
-	if err := c.Login(); err != nil {
-		return fmt.Errorf("failed to send login after key load: %w", err)
-	}
-
-	return nil
-}
-
-func (c *AppClient) extractSessionKey(msg Message) ([]byte, error) {
-	if c.cfg.KeyExtractor != nil {
-		return c.cfg.KeyExtractor(msg, c.cfg.SessionKeyOffset)
-	}
-
-	if c.cfg.SessionKeyOffset < 0 || c.cfg.SessionKeyOffset >= len(msg.Body) {
-		return nil, fmt.Errorf(
-			"%w: body length %d with offset %d",
-			ErrSessionKeyNotLoaded,
-			len(msg.Body),
-			c.cfg.SessionKeyOffset,
-		)
-	}
-
-	return append([]byte(nil), msg.Body[c.cfg.SessionKeyOffset:]...), nil
-}
-
-func (c *AppClient) handleLoginAck(msg Message) error {
-	if msg.Code != 0 {
-		return &ServerError{
-			Command: msg.Command,
-			Code:    msg.Code,
-			Msg:     "login rejected",
-		}
-	}
-
-	c.mu.Lock()
-	c.authenticated = true
-	c.mu.Unlock()
-	return nil
-}
-
-func (c *AppClient) handleLoginSuccess(msg Message) error {
-	if msg.Code != 0 {
-		return &ServerError{
-			Command: msg.Command,
-			Code:    msg.Code,
-			Msg:     "login success command failed",
-		}
-	}
-
-	c.mu.Lock()
-	c.authenticated = true
-	c.mu.Unlock()
-	return nil
-}
-
-func (c *AppClient) handleDisconnect(err error) {
-	c.mu.Lock()
-	c.authenticated = false
-	c.sessionKeyLoaded = false
-	c.awaitingKey = true
-	c.mu.Unlock()
-
-	if c.cfg.OnDisconnect != nil {
-		c.cfg.OnDisconnect(err)
 	}
 }

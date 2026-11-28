@@ -3,14 +3,14 @@ package mt5
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/kahono0/mt5/models"
 )
-
-const defaultPingCommand = 51
 
 // Message represents a parsed MT5 protocol message received from the server.
 type Message struct {
@@ -38,7 +38,24 @@ type DisconnectHook func(client *Client, err error)
 type Config struct {
 	// URL is the WebSocket endpoint (e.g. "wss://broker.example/ws").
 	URL string
+	// ServerURL is the logical server address sent during login.
+	ServerURL string
+	// AccountID is the MT5 account number.
+	AccountID uint64
+	// Password is the account password.
+	Password string
+	// DeviceID is a unique device identifier string.
+	DeviceID string
+
+	// SessionKeyOffset is the byte offset into the first message's body
+	// where the session key begins. Defaults to 66.
+	SessionKeyOffset int
+	// SessionKeyBody is the payload sent with the session key request.
+	SessionKeyBody []byte
+	// KeyExtractor overrides the default session key extraction logic.
+	KeyExtractor KeyExtractor
 	// Dialer is the WebSocket dialer. Defaults to websocket.DefaultDialer.
+
 	Dialer *websocket.Dialer
 	// RequestHeader is sent during the WebSocket handshake.
 	RequestHeader http.Header
@@ -48,15 +65,17 @@ type Config struct {
 	// Codec handles command encoding, framing, and message parsing.
 	// Defaults to [DefaultCodec].
 	Codec Codec
+
 	// SkipCommands is a set of command IDs to silently discard.
 	// Defaults to {25, 51} (heartbeat-related).
 	SkipCommands map[uint16]bool
 	// PingInterval controls how often heartbeat pings are sent.
 	// Defaults to 5 seconds.
 	PingInterval time.Duration
-	// PingCommand is the command ID used for heartbeat pings.
-	// Defaults to 51.
-	PingCommand uint16
+	// PingTimeout is the maximum time to wait for a ping acknowledgment.
+	// Defaults to 30 seconds.
+	// If a ping is not acknowledged within this time, the client will consider the connection lost and attempt to reconnect.
+	PingTimeout time.Duration
 	// ReconnectBackoff is the delay between reconnection attempts.
 	// Defaults to 3 seconds.
 	ReconnectBackoff time.Duration
@@ -125,8 +144,13 @@ type Client struct {
 	onAny         []handlerEntry
 	nextHandlerID uint64
 
+	authenticated bool
+
 	//msgCh chan Message
 	//errCh chan error
+
+	pingAckCh     chan struct{}
+	heartbeatDone chan struct{}
 }
 
 // New creates a new [Client] with the given configuration. It does not
@@ -152,8 +176,8 @@ func New(config Config) (*Client, error) {
 		config.PingInterval = 5 * time.Second
 	}
 
-	if config.PingCommand == 0 {
-		config.PingCommand = defaultPingCommand
+	if config.PingTimeout <= 0 {
+		config.PingTimeout = 30 * time.Second
 	}
 
 	if config.ReconnectBackoff <= 0 {
@@ -169,7 +193,7 @@ func New(config Config) (*Client, error) {
 	}
 
 	if config.SkipCommands == nil {
-		config.SkipCommands = map[uint16]bool{25: true, 51: true}
+		config.SkipCommands = map[uint16]bool{25: true}
 	}
 
 	if config.Dialer == nil {
@@ -182,7 +206,13 @@ func New(config Config) (*Client, error) {
 		handlers: make(map[uint16][]handlerEntry),
 		//msgCh:    make(chan Message, config.MessageBuffer),
 		//errCh:    make(chan error, config.ErrorBuffer),
+
 	}
+
+	c.On(CommandRequestSessionKey, c.handleSessionKeyMessage)
+	c.On(CommandLogin, c.handleLoginAck)
+	c.On(CommandLoginSuccess, c.handleLoginSuccess)
+	c.On(CommandPing, c.handlePingAck)
 
 	return c, nil
 }
@@ -271,7 +301,8 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.mu.RUnlock()
 
-	conn, _, err := c.cfg.Dialer.DialContext(ctx, c.cfg.URL, c.cfg.RequestHeader)
+	//conn, _, err := c.cfg.Dialer.DialContext(ctx, c.cfg.URL, c.cfg.RequestHeader)
+	conn, _, err := websocket.DefaultDialer.Dial(c.cfg.URL, c.cfg.RequestHeader)
 	if err != nil {
 		return err
 	}
@@ -304,7 +335,9 @@ func (c *Client) Run(ctx context.Context) error {
 	connectedOnce := false
 
 	for {
+		log.Printf("Attempting to connect (attempt %d)", attempt+1)
 		if err := c.Connect(ctx); err != nil {
+			log.Printf("Connection error: %v", err)
 			if !c.shouldRetry(attempt, err) {
 				return err
 			}
@@ -334,14 +367,14 @@ func (c *Client) Run(ctx context.Context) error {
 		connectedOnce = true
 		attempt = 0
 
-		heartbeatDone := make(chan struct{})
-		go c.heartbeatLoop(heartbeatDone)
+		c.mu.Lock()
+		c.authenticated = false
+		c.mu.Unlock()
 
 		err := c.readLoop(ctx)
 		if err != nil && c.cfg.OnDisconnect != nil {
 			c.cfg.OnDisconnect(c, err)
 		}
-		close(heartbeatDone)
 		_ = c.closeConn()
 
 		if err == nil {
@@ -351,6 +384,8 @@ func (c *Client) Run(ctx context.Context) error {
 		if !c.shouldRetry(attempt, err) {
 			return err
 		}
+
+		c.cfg.Crypto.ResetKey() // Reset the encryption key on disconnect to ensure a fresh key is requested on reconnect.
 
 		attempt++
 		if err := c.waitBackoff(ctx); err != nil {
@@ -375,22 +410,32 @@ func (c *Client) Close() error {
 
 // SendCommand encrypts and sends a command with the given body.
 func (c *Client) SendCommand(command uint16, body []byte) error {
-	payload, err := c.cfg.Codec.EncodeCommand(command, body)
-	if err != nil {
-		return err
-	}
-
-	cipherText, err := c.cfg.Crypto.Encrypt(payload)
-	if err != nil {
-		return err
-	}
-
-	frame, err := c.cfg.Codec.Pack(cipherText)
+	log.Printf("Sending command=%d body=%d", command, len(body))
+	frame, err := c.prepareMessage(command, body)
 	if err != nil {
 		return err
 	}
 
 	return c.Send(frame)
+}
+
+func (c *Client) prepareMessage(command uint16, body []byte) ([]byte, error) {
+	payload, err := c.cfg.Codec.EncodeCommand(command, body)
+	if err != nil {
+		return nil, err
+	}
+
+	cipherText, err := c.cfg.Crypto.Encrypt(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	frame, err := c.cfg.Codec.Pack(cipherText)
+	if err != nil {
+		return nil, err
+	}
+
+	return frame, nil
 }
 
 // Send writes a raw framed message to the WebSocket connection.
@@ -412,32 +457,24 @@ func (c *Client) Send(frame []byte) error {
 	return conn.WriteMessage(websocket.BinaryMessage, frame)
 }
 
-// RequestKey sends a session key request to the server.
-func (c *Client) RequestKey(param []byte) error {
-	if param == nil {
-		param = make([]byte, 64)
+func (c *Client) SendWithDeadline(frame []byte, deadline time.Time) error {
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return ErrClientClosed
 	}
-	return c.SendCommand(0, param)
-}
+	conn := c.conn
+	c.mu.RUnlock()
 
-// LoadSessionKeyFromMessage extracts the session key from a server
-// message starting at bodyOffset and sets it as the active encryption key.
-func (c *Client) LoadSessionKeyFromMessage(msg Message, bodyOffset int) error {
-	if bodyOffset < 0 || bodyOffset >= len(msg.Body) {
-		return fmt.Errorf("invalid key offset %d", bodyOffset)
+	if conn == nil {
+		return ErrNotConnected
 	}
-	return c.cfg.Crypto.SetKey(msg.Body[bodyOffset:])
-}
 
-// SetKeyFromString replaces the encryption key by decoding an obfuscated
-// key string.
-func (c *Client) SetKeyFromString(key string) error {
-	return c.cfg.Crypto.SetKeyFromString(key)
-}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 
-// SetSessionKey replaces the encryption key with raw key bytes.
-func (c *Client) SetSessionKey(key []byte) error {
-	return c.cfg.Crypto.SetKey(key)
+	conn.SetWriteDeadline(deadline)
+	return conn.WriteMessage(websocket.BinaryMessage, frame)
 }
 
 func (c *Client) readLoop(ctx context.Context) error {
@@ -459,6 +496,7 @@ func (c *Client) readLoop(ctx context.Context) error {
 
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
+			log.Printf("read error: %v", err)
 			c.publishError(ErrReadError)
 			return ErrReadError
 		}
@@ -485,27 +523,9 @@ func (c *Client) readLoop(ctx context.Context) error {
 			continue
 		}
 
+		log.Printf("Received message: command=%d code=%d body=%d", msg.Command, msg.Code, len(msg.Body))
+
 		c.dispatch(msg)
-
-	}
-}
-
-func (c *Client) heartbeatLoop(done <-chan struct{}) {
-	ticker := time.NewTicker(c.cfg.PingInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-done:
-			return
-		case <-c.closeCh:
-			return
-		case <-ticker.C:
-			if err := c.SendCommand(c.cfg.PingCommand, nil); err != nil {
-				c.publishError(fmt.Errorf("ping error: %w", err))
-				return
-			}
-		}
 	}
 }
 
@@ -598,4 +618,198 @@ func (c *Client) publishError(err error) {
 	//case c.errCh <- err:
 	//default:
 	//}
+}
+
+// auth funcs
+// RequestKey sends a session key request to the server.
+func (c *Client) RequestKey(param []byte) error {
+	if param == nil {
+		param = make([]byte, 64)
+	}
+	return c.SendCommand(0, param)
+}
+
+// LoadSessionKeyFromMessage extracts the session key from a server
+// message starting at bodyOffset and sets it as the active encryption key.
+func (c *Client) LoadSessionKeyFromMessage(msg Message, bodyOffset int) error {
+	if bodyOffset < 0 || bodyOffset >= len(msg.Body) {
+		return fmt.Errorf("invalid key offset %d", bodyOffset)
+	}
+	return c.cfg.Crypto.SetKey(msg.Body[bodyOffset:])
+}
+
+// SetKeyFromString replaces the encryption key by decoding an obfuscated
+// key string.
+func (c *Client) SetKeyFromString(key string) error {
+	return c.cfg.Crypto.SetKeyFromString(key)
+}
+
+// SetSessionKey replaces the encryption key with raw key bytes.
+func (c *Client) SetSessionKey(key []byte) error {
+	return c.cfg.Crypto.SetKey(key)
+}
+
+func (c *Client) handleSessionKeyMessage(msg Message) error {
+	keyBytes, err := c.extractSessionKey(msg)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SetSessionKey(keyBytes); err != nil {
+		return fmt.Errorf("failed to set session key: %w", err)
+	}
+
+	if err := c.Login(); err != nil {
+		return fmt.Errorf("failed to send login after key load: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) extractSessionKey(msg Message) ([]byte, error) {
+	if c.cfg.KeyExtractor != nil {
+		return c.cfg.KeyExtractor(msg, c.cfg.SessionKeyOffset)
+	}
+
+	if c.cfg.SessionKeyOffset < 0 || c.cfg.SessionKeyOffset >= len(msg.Body) {
+		return nil, fmt.Errorf(
+			"%w: body length %d with offset %d",
+			ErrSessionKeyNotLoaded,
+			len(msg.Body),
+			c.cfg.SessionKeyOffset,
+		)
+	}
+
+	return append([]byte(nil), msg.Body[c.cfg.SessionKeyOffset:]...), nil
+}
+
+// Login sends the login command to the server. This is called
+// automatically after the session key is loaded, but can be called
+// manually if needed.
+func (c *Client) Login() error {
+	loginRequest := models.LoginRequest{
+		ServerURL: c.cfg.ServerURL,
+		Password:  c.cfg.Password,
+		AccountID: c.cfg.AccountID,
+		DeviceID:  c.cfg.DeviceID,
+	}
+	body, err := loginRequest.Serialize()
+	if err != nil {
+		return err
+	}
+
+	if err := c.SendCommand(CommandLogin, body); err != nil {
+		return fmt.Errorf("failed to send login command: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) handleLoginAck(msg Message) error {
+	if msg.Code != 0 {
+		return &ServerError{
+			Command: msg.Command,
+			Code:    msg.Code,
+			Msg:     "login rejected",
+		}
+	}
+
+	c.mu.Lock()
+	c.authenticated = true
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Client) handleLoginSuccess(msg Message) error {
+	if msg.Code != 0 {
+		return &ServerError{
+			Command: msg.Command,
+			Code:    msg.Code,
+			Msg:     "login success command failed",
+		}
+	}
+
+	c.mu.Lock()
+	c.authenticated = true
+	c.mu.Unlock()
+
+	c.onAuthenticated()
+	return nil
+}
+
+// onAuthenticated is called after the client has successfully completed the login handshake.
+func (c *Client) onAuthenticated() {
+	c.startHeartbeatLoop()
+}
+
+func (c *Client) startHeartbeatLoop() {
+	// close heartbeat chans if they are not already closed and create new ones
+	// start heartbeat loop
+	c.mu.Lock()
+	if c.pingAckCh == nil {
+		c.pingAckCh = make(chan struct{}, 1)
+	}
+	if c.heartbeatDone == nil {
+		c.heartbeatDone = make(chan struct{})
+	}
+	c.mu.Unlock()
+
+	go c.heartbeatLoop()
+}
+
+// IsAuthenticated reports whether the client has completed the login
+// handshake.
+func (c *Client) IsAuthenticated() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.authenticated
+}
+
+// heartbeat funcs
+func (c *Client) handlePingAck(msg Message) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.pingAckCh != nil {
+		select {
+		case c.pingAckCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+var pLast = time.Now()
+
+// heartbeatLoop sends periodic ping commands and checks for acknowledgments.
+func (c *Client) heartbeatLoop() {
+	frame, err := c.prepareMessage(CommandPing, nil)
+	if err != nil {
+		c.publishError(fmt.Errorf("failed to prepare ping message: %w", err))
+		return
+	}
+
+	timer := time.NewTimer(c.cfg.PingInterval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-timer.C:
+			log.Printf("Sending heartbeat ping after %s", time.Since(pLast))
+			if err := c.Send(frame); err != nil {
+				c.publishError(fmt.Errorf("send heartbeat ping: %w", err))
+				return
+			}
+			pLast = time.Now()
+		case <-c.pingAckCh:
+			log.Printf("Received heartbeat ping ack after %s", time.Since(pLast))
+			timer.Reset(c.cfg.PingInterval)
+			continue
+		case <-time.After(c.cfg.PingTimeout):
+			c.publishError(fmt.Errorf("heartbeat ping timeout after %s", c.cfg.PingTimeout))
+			return
+		case <-c.heartbeatDone:
+			log.Printf("Heartbeat loop exiting")
+			return
+		}
+
+	}
 }

@@ -12,10 +12,6 @@ func TestNewAppliesDefaults(t *testing.T) {
 		t.Fatalf("expected positive ping interval")
 	}
 
-	if c.cfg.PingCommand == 0 {
-		t.Fatalf("expected non-zero ping command")
-	}
-
 	if c.cfg.Codec == nil || c.cfg.Crypto == nil {
 		t.Fatalf("expected default codec and crypto")
 	}
