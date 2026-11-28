@@ -21,10 +21,15 @@ type SymbolList struct {
 	Symbols []Symbol
 }
 
+type SymbolsResult struct {
+	Value *SymbolList
+	Err   error
+}
+
 // QuerySymbolsHandler is a function that processes decoded symbol data.
 // Handle errors within the callback; only framework-level decode
 // errors are routed to [Config.OnError] and the error channel.
-type QuerySymbolsHandler func(symbols *SymbolList, msg Message)
+type QuerySymbolsHandler func(SymbolsResult)
 
 // QuerySymbols sends a request for all symbols
 // The client must be authenticated
@@ -44,18 +49,14 @@ func (c *AppClient) QuerySymbols() error {
 // to a dedicated callback. Returns a function that, when called, removes
 // the handler. Typed handlers for this command share one symbol list per
 // message; treat it and its Symbols slice as read-only.
-func (c *AppClient) RegisterQuerySymbolsHandler(
-	handler QuerySymbolsHandler,
-	opts ...HandlerOption,
-) func() {
+func (c *AppClient) RegisterQuerySymbolsHandler(handler QuerySymbolsHandler) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return registerTyped(c.core, querySymbolsCommand, func(info *SymbolList, msg Message) error {
-		handler(info, msg)
-		return nil
-	}, opts...)
+	return c.On(CommandQuerySymbols, func(r Result) {
+		handler(SymbolsResult{Value: r.Value.(*SymbolList), Err: r.Err})
+	})
 }
 
 func (c *AppClient) GetSymbols() (*SymbolList, error) {
@@ -63,26 +64,19 @@ func (c *AppClient) GetSymbols() (*SymbolList, error) {
 		return nil, ErrNotAuthenticated
 	}
 
-	type result struct {
-		symbols *SymbolList
-		err     error
-	}
+	ch := make(chan SymbolsResult, 1)
 
-	ch := make(chan result, 1)
-
-	unregister := c.RegisterQuerySymbolsHandler(func(symbols *SymbolList, msg Message) {
-		ch <- result{symbols: symbols}
-	}, WithErrorHandler(func(err error) {
-		ch <- result{err: err}
-	}))
-	defer unregister()
+	cancel := c.RegisterQuerySymbolsHandler(func(result SymbolsResult) {
+		ch <- result
+	})
+	defer cancel()
 
 	if err := c.QuerySymbols(); err != nil {
 		return nil, err
 	}
 
 	res := <-ch
-	return res.symbols, res.err
+	return res.Value, res.Err
 }
 
 func DecodeSymbols(msg Message) (*SymbolList, error) {

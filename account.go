@@ -12,7 +12,7 @@ type AccountInfo = models.AccountInfo
 // AccountInfoHandler is a function that processes decoded account data.
 // Handle errors within the callback; only framework-level decode
 // errors are routed to [Config.OnError] and the error channel.
-type AccountInfoHandler func(info *AccountInfo, msg Message)
+type AccountInfoHandler func(info *AccountInfo)
 
 // RequestAccountInfo sends a request for account information.
 // The client must be authenticated.
@@ -34,17 +34,11 @@ func (c *AppClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error) {
 		return nil, ErrNotAuthenticated
 	}
 
-	type result struct {
-		info *AccountInfo
-		err  error
-	}
-	ch := make(chan result, 1)
+	ch := make(chan Result, 1)
 
-	cancel := c.RegisterAccountInfoHandler(func(info *AccountInfo, msg Message) {
-		ch <- result{info, nil}
-	}, WithErrorHandler(func(err error) {
-		ch <- result{nil, err}
-	}))
+	cancel := c.On(CommandRequestAccountInfo, func(r Result) {
+		ch <- r
+	})
 	defer cancel()
 
 	if err := c.RequestAccountInfo(); err != nil {
@@ -55,7 +49,7 @@ func (c *AppClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case r := <-ch:
-		return r.info, r.err
+		return r.Value.(*AccountInfo), r.Err
 	}
 }
 
@@ -64,15 +58,14 @@ func (c *AppClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error) {
 // handler to a dedicated callback. Returns a function that, when called,
 // removes the handler. Typed handlers for this command share one decoded
 // account value per message; treat it as read-only.
-func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts ...HandlerOption) func() {
+func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return registerTyped(c.core, accountInfoCommand, func(info *AccountInfo, msg Message) error {
-		handler(info, msg)
-		return nil
-	}, opts...)
+	return c.On(CommandRequestAccountInfo, func(r Result) {
+		handler(r.Value.(*AccountInfo))
+	})
 }
 
 func decodeAccountInfoMessage(msg Message) (*AccountInfo, error) {

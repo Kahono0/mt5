@@ -2,6 +2,7 @@ package mt5
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 )
 
@@ -32,7 +33,11 @@ type Tick struct {
 // TickHandler is a function that processes decoded tick data.
 // Handle errors within the callback; only framework-level decode
 // errors are routed to [Config.OnError] and the error channel.
-type TickHandler func(ticks []Tick, msg Message)
+type TickResult struct {
+	Value []Tick
+	Err   error
+}
+type TickHandler func(TickResult)
 
 const tickRecordSize = 50
 
@@ -80,13 +85,38 @@ func DecodeTicks(msg Message) ([]Tick, error) {
 // route errors from this handler to a dedicated callback. Returns a
 // function that, when called, removes the handler. Typed handlers for this
 // command share one decoded tick slice per message; treat it as read-only.
-func (c *AppClient) RegisterTickHandler(handler TickHandler, opts ...HandlerOption) func() {
+func (c *AppClient) RegisterTickHandler(handler TickHandler) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return registerTyped(c.core, tickUpdateCommand, func(ticks []Tick, msg Message) error {
-		handler(ticks, msg)
-		return nil
-	}, opts...)
+	return c.On(CommandTickUpdate, func(r Result) {
+		handler(TickResult{Value: r.Value.([]Tick), Err: r.Err})
+	})
+}
+
+// SubscribeTicks subscribes to real-time tick updates for the given
+// symbol IDs. The client must be authenticated.
+func (c *AppClient) SubscribeTicks(symbolIDs []uint32) error {
+	if !c.IsAuthenticated() {
+		return ErrNotAuthenticated
+	}
+	body := buildTickSubscriptionPayload(symbolIDs)
+	if err := c.core.SendCommand(CommandSubscribeTicks, body); err != nil {
+		return fmt.Errorf("failed to subscribe ticks: %w", err)
+	}
+	return nil
+}
+
+// BuildTickSubscriptionPayload encodes a list of symbol IDs into the
+// binary payload format expected by the tick subscription command.
+func buildTickSubscriptionPayload(symbolIDs []uint32) []byte {
+	buf := make([]byte, 4+len(symbolIDs)*4)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(len(symbolIDs)))
+	offset := 4
+	for _, id := range symbolIDs {
+		binary.LittleEndian.PutUint32(buf[offset:offset+4], id)
+		offset += 4
+	}
+	return buf
 }

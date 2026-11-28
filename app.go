@@ -56,10 +56,6 @@ type AppConfig struct {
 	ReconnectBackoff time.Duration
 	// ReconnectMaxAttempts limits reconnection attempts.
 	ReconnectMaxAttempts int
-	// MessageBuffer is the size of the message channel buffer.
-	MessageBuffer int
-	// ErrorBuffer is the size of the error channel buffer.
-	ErrorBuffer int
 	// OnError is called for every error encountered during operation.
 	// Unlike the Errors channel, this callback is never lossy — it is
 	// always invoked regardless of channel buffer pressure.
@@ -123,8 +119,6 @@ func NewApp(cfg AppConfig) (*AppClient, error) {
 		ReconnectMaxAttempts: cfg.ReconnectMaxAttempts,
 		AutoRequestKey:       true,
 		RequestKeyBody:       cfg.SessionKeyBody,
-		MessageBuffer:        cfg.MessageBuffer,
-		ErrorBuffer:          cfg.ErrorBuffer,
 		OnError:              cfg.OnError,
 	})
 	if err != nil {
@@ -159,20 +153,12 @@ func (c *AppClient) Close() error {
 	return c.core.Close()
 }
 
-// RegisterHandler registers a handler for a specific command ID on the
-// underlying [Client]. Use [WithErrorHandler] to route errors from this
-// handler to a dedicated callback. Returns a function that, when called,
-// removes the handler.
-func (c *AppClient) RegisterHandler(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
-	return c.core.On(command, handler, opts...)
+func (c *AppClient) On(command uint16, fn func(Result)) func() {
+	return c.core.On(command, fn)
 }
 
-// RegisterAnyHandler registers a handler that is called for every
-// received message. Use [WithErrorHandler] to route errors from this
-// handler to a dedicated callback. Returns a function that, when called,
-// removes the handler.
-func (c *AppClient) RegisterAnyHandler(handler MessageHandler, opts ...HandlerOption) func() {
-	return c.core.OnAny(handler, opts...)
+func (c *AppClient) OnChan(command uint16, buffer int) (<-chan Result, func()) {
+	return c.core.OnChan(command, buffer)
 }
 
 // IsAuthenticated reports whether the client has completed the login

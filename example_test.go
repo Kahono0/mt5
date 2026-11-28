@@ -32,12 +32,6 @@ func ExampleNewApp() {
 		log.Fatal(err)
 	}
 
-	client.RegisterTickHandler(func(ticks []mt5.Tick, msg mt5.Message) {
-		for _, tick := range ticks {
-			log.Printf("tick: symbol=%d bid=%.5f ask=%.5f", tick.SymbolID, tick.Bid, tick.Ask)
-		}
-	})
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

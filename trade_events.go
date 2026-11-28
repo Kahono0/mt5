@@ -4,21 +4,24 @@ import "github.com/kahono0/mt5/models"
 
 type TradeEvent = models.TradeEvent
 
-type TradeEventHandler func(event *TradeEvent)
+type TradeEventResult struct {
+	Value *TradeEvent
+	Err   error
+}
+
+type TradeEventHandler func(TradeEventResult)
 
 // RegisterTradeEventHandler registers a callback for decoded trade events.
 // Typed handlers for this command share one event per message; treat it and
 // its nested fields as read-only.
-func (c *AppClient) RegisterTradeEventHandler(handler TradeEventHandler, opts ...HandlerOption) func() {
+func (c *AppClient) RegisterTradeEventHandler(handler TradeEventHandler) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return registerTyped(c.core, tradeEventCommand, func(event *TradeEvent, _ Message) error {
-		handler(event)
-
-		return nil
-	}, opts...)
+	return c.On(CommandTradeEvent, func(result Result) {
+		handler(TradeEventResult{Value: result.Value.(*TradeEvent), Err: result.Err})
+	})
 }
 
 func decodeTradeEventMessage(msg Message) (*TradeEvent, error) {

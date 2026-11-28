@@ -24,50 +24,15 @@ const (
 	CommandPing         uint16 = 51
 )
 
-// typedCommand binds a wire command to the decoded value type and its decoder.
-// One canonical instance is kept here for each typed command so all of its
-// handlers use the same decoder.
-type Command[T any] struct {
-	id     uint16
-	decode func(Message) (T, error)
+var decoders = [256]func(msg Message) (any, error){
+	CommandRequestSessionKey:  func(msg Message) (any, error) { return msg, nil },
+	CommandLogin:              func(msg Message) (any, error) { return msg, nil },
+	CommandLoginSuccess:       func(msg Message) (any, error) { return msg, nil },
+	CommandRequestAccountInfo: func(msg Message) (any, error) { return decodeAccountInfoMessage(msg) },
+	CommandRequestPositions:   func(msg Message) (any, error) { return decodePositionsMessage(msg) },
+	CommandLoadHistory:        func(msg Message) (any, error) { return decodeTradeHistoryMessage(msg) },
+	CommandQuerySymbols:       func(msg Message) (any, error) { return DecodeSymbols(msg) },
+	CommandTickUpdate:         func(msg Message) (any, error) { return DecodeTicks(msg) },
+	CommandTradeEvent:         func(msg Message) (any, error) { return decodeTradeEventMessage(msg) },
+	CommandTransactionEvent:   func(msg Message) (any, error) { return decodeTransactionEventMessage(msg) },
 }
-
-func newTypedCommand[T any](id uint16, decode func(Message) (T, error)) Command[T] {
-	return Command[T]{id: id, decode: decode}
-}
-
-var (
-	accountInfoCommand  = newTypedCommand(CommandRequestAccountInfo, decodeAccountInfoMessage)
-	positionsCommand    = newTypedCommand(CommandRequestPositions, decodePositionsMessage)
-	tradeHistoryCommand = newTypedCommand(CommandLoadHistory, decodeTradeHistoryMessage)
-	querySymbolsCommand = newTypedCommand(CommandQuerySymbols, DecodeSymbols)
-	tickUpdateCommand   = newTypedCommand(CommandTickUpdate, DecodeTicks)
-	tradeEventCommand   = newTypedCommand(CommandTradeEvent, decodeTradeEventMessage)
-	transactionCommand  = newTypedCommand(CommandTransactionEvent, decodeTransactionEventMessage)
-)
-
-// AccountInfoCommand returns the typed command specification for account
-// information messages.
-func AccountInfoCommand() Command[*AccountInfo] { return accountInfoCommand }
-
-// PositionsCommand returns the typed command specification for position
-// messages.
-func PositionsCommand() Command[[]*Position] { return positionsCommand }
-
-// TradeHistoryCommand returns the typed command specification for trade
-// history messages.
-func TradeHistoryCommand() Command[*TradeHistory] { return tradeHistoryCommand }
-
-// QuerySymbolsCommand returns the typed command specification for symbol
-// list messages.
-func QuerySymbolsCommand() Command[*SymbolList] { return querySymbolsCommand }
-
-// TickUpdateCommand returns the typed command specification for tick updates.
-func TickUpdateCommand() Command[[]Tick] { return tickUpdateCommand }
-
-// TradeEventCommand returns the typed command specification for trade events.
-func TradeEventCommand() Command[*TradeEvent] { return tradeEventCommand }
-
-// TransactionEventCommand returns the typed command specification for
-// transaction events.
-func TransactionEventCommand() Command[*EnvelopeTransaction] { return transactionCommand }

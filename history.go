@@ -11,20 +11,24 @@ import (
 
 type TradeHistory = models.TradeHistory
 
-type TradeHistoryHandler func(history *TradeHistory)
+type TradeHistoryResult struct {
+	Value *TradeHistory
+	Err   error
+}
+
+type TradeHistoryHandler func(TradeHistoryResult)
 
 // RegisterTradeHistoryHandler registers a callback for decoded trade history.
 // Typed handlers for this command share one history value per message; treat
 // it and its nested slices as read-only.
-func (c *AppClient) RegisterTradeHistoryHandler(handler TradeHistoryHandler, opts ...HandlerOption) func() {
+func (c *AppClient) RegisterTradeHistoryHandler(handler TradeHistoryHandler) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return registerTyped(c.core, tradeHistoryCommand, func(history *TradeHistory, _ Message) error {
-		handler(history)
-		return nil
-	}, opts...)
+	return c.On(CommandLoadHistory, func(result Result) {
+		handler(TradeHistoryResult{Value: result.Value.(*TradeHistory), Err: result.Err})
+	})
 }
 
 func decodeTradeHistoryMessage(msg Message) (*TradeHistory, error) {
@@ -53,18 +57,11 @@ func (c *AppClient) GetTradeHistory(ctx context.Context, from, to time.Time) (*T
 		return nil, ErrNotAuthenticated
 	}
 
-	type result struct {
-		history *TradeHistory
-		err     error
-	}
+	ch := make(chan TradeHistoryResult, 1)
 
-	ch := make(chan result, 1)
-
-	cancel := c.RegisterTradeHistoryHandler(func(history *TradeHistory) {
-		ch <- result{history: history, err: nil}
-	}, WithErrorHandler(func(err error) {
-		ch <- result{history: nil, err: err}
-	}))
+	cancel := c.RegisterTradeHistoryHandler(func(result TradeHistoryResult) {
+		ch <- result
+	})
 	defer cancel()
 
 	if err := c.RequestTradeHistory(from, to); err != nil {
@@ -73,7 +70,7 @@ func (c *AppClient) GetTradeHistory(ctx context.Context, from, to time.Time) (*T
 
 	select {
 	case res := <-ch:
-		return res.history, res.err
+		return res.Value, res.Err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

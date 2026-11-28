@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -24,8 +23,16 @@ type Message struct {
 	Raw []byte
 }
 
-// MessageHandler is a function that processes a received [Message].
-type MessageHandler func(Message) error
+type Result struct {
+	Value any
+	Err   error
+}
+
+type handler struct {
+	id int
+	fn func(Result)
+	ch chan Result
+}
 
 // ConnectHook is called after a successful connection. The reconnect
 // parameter is true for all connections after the first.
@@ -87,12 +94,6 @@ type Config struct {
 	AutoRequestKey bool
 	// RequestKeyBody is the payload sent with the automatic key request.
 	RequestKeyBody []byte
-	// MessageBuffer is the size of the message channel buffer.
-	// Defaults to 64.
-	MessageBuffer int
-	// ErrorBuffer is the size of the error channel buffer.
-	// Defaults to 64.
-	ErrorBuffer int
 	// OnError is called for every error encountered during operation.
 	// Unlike the Errors channel, this callback is never lossy — it is
 	// always invoked regardless of channel buffer pressure.
@@ -101,95 +102,6 @@ type Config struct {
 	OnConnect ConnectHook
 	// OnDisconnect is called when the connection drops.
 	OnDisconnect DisconnectHook
-}
-
-// handlerEntry pairs a message handler with an optional per-handler
-// error callback.
-type handlerEntry struct {
-	id          uint64
-	fn          MessageHandler
-	decode      func(Message) (any, error)
-	invokeTyped func(any, Message) error
-	onDecodeErr func(error, Message)
-	onError     func(error)
-	onRemove    func()
-}
-
-// MessageResult contains either a decoded value or the error from decoding a
-// message for a typed subscription.
-type MessageResult[T any] struct {
-	Value   T
-	Message Message
-	Err     error
-}
-
-// Subscription receives decoded messages for one typed command. Each
-// subscription has its own channel, but decoded values are shared with other
-// handlers and subscriptions for that message and should be treated as
-// read-only. When its buffer is full, new messages are dropped and counted by
-// Dropped. Call Cancel to close the channel.
-type Subscription[T any] struct {
-	C      <-chan MessageResult[T]
-	state  *subscriptionState[T]
-	cancel func()
-}
-
-// Cancel unregisters the subscription and closes its channel. It is safe to
-// call more than once.
-func (s *Subscription[T]) Cancel() {
-	if s != nil && s.cancel != nil {
-		s.cancel()
-	}
-}
-
-// Dropped returns the number of messages discarded because the channel buffer
-// was full.
-func (s *Subscription[T]) Dropped() uint64 {
-	if s == nil || s.state == nil {
-		return 0
-	}
-	return s.state.dropped.Load()
-}
-
-type subscriptionState[T any] struct {
-	mu      sync.Mutex
-	ch      chan MessageResult[T]
-	closed  bool
-	dropped atomic.Uint64
-}
-
-func (s *subscriptionState[T]) offer(result MessageResult[T]) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	select {
-	case s.ch <- result:
-	default:
-		s.dropped.Add(1)
-	}
-}
-
-func (s *subscriptionState[T]) close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.closed {
-		s.closed = true
-		close(s.ch)
-	}
-}
-
-// HandlerOption configures how a registered handler behaves.
-type HandlerOption func(*handlerEntry)
-
-// WithErrorHandler sets a per-handler error callback. When set, errors
-// returned by this handler are routed to fn instead of the global error
-// channel and [Config.OnError] callback.
-func WithErrorHandler(fn func(error)) HandlerOption {
-	return func(h *handlerEntry) {
-		h.onError = fn
-	}
 }
 
 // Client is a low-level WebSocket client for the MT5 binary protocol.
@@ -209,14 +121,10 @@ type Client struct {
 	closeCh chan struct{}
 
 	handlersMu    sync.RWMutex
-	handlers      map[uint16][]handlerEntry
-	onAny         []handlerEntry
-	nextHandlerID uint64
+	handlers      map[uint16][]handler
+	nextHandlerID int
 
 	authenticated bool
-
-	//msgCh chan Message
-	//errCh chan error
 
 	pingAckCh     chan struct{}
 	heartbeatDone chan struct{}
@@ -253,14 +161,6 @@ func New(config Config) (*Client, error) {
 		config.ReconnectBackoff = 3 * time.Second
 	}
 
-	if config.MessageBuffer <= 0 {
-		config.MessageBuffer = 64
-	}
-
-	if config.ErrorBuffer <= 0 {
-		config.ErrorBuffer = 64
-	}
-
 	if config.SkipCommands == nil {
 		config.SkipCommands = map[uint16]bool{25: true}
 	}
@@ -272,9 +172,7 @@ func New(config Config) (*Client, error) {
 	c := &Client{
 		cfg:      config,
 		closeCh:  make(chan struct{}),
-		handlers: make(map[uint16][]handlerEntry),
-		//msgCh:    make(chan Message, config.MessageBuffer),
-		//errCh:    make(chan error, config.ErrorBuffer),
+		handlers: make(map[uint16][]handler),
 
 		pingAckCh: make(chan struct{}, 1),
 	}
@@ -286,141 +184,43 @@ func New(config Config) (*Client, error) {
 	return c, nil
 }
 
-// On registers a handler for a specific command ID. Multiple handlers
-// can be registered for the same command. Use [WithErrorHandler] to
-// route errors from this handler to a dedicated callback instead of
-// the global error channel. Returns a function that, when called,
-// removes the handler.
-func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
-	e := handlerEntry{fn: handler}
-	for _, o := range opts {
-		if o != nil {
-			o(&e)
-		}
-	}
+func (c *Client) On(command uint16, fn func(Result)) func() {
+	e := handler{id: 0, fn: fn}
 	return c.addHandler(command, e)
 }
 
-func (c *Client) addHandler(command uint16, e handlerEntry) func() {
+func (c *Client) OnChan(command uint16, buffer int) (<-chan Result, func()) {
+	if buffer < 0 {
+		buffer = 1
+	}
+
+	ch := make(chan Result, buffer)
+
+	e := handler{ch: ch}
+
+	return ch, c.addHandler(command, e)
+}
+
+func (c *Client) addHandler(command uint16, e handler) func() {
 	c.handlersMu.Lock()
 	c.nextHandlerID++
-	e.id = c.nextHandlerID
+	e.id = int(c.nextHandlerID)
 	c.handlers[command] = append(c.handlers[command], e)
 	c.handlersMu.Unlock()
 
 	return func() {
 		c.handlersMu.Lock()
 		handlers := c.handlers[command]
-		var onRemove func()
 		for i, h := range handlers {
 			if h.id == e.id {
 				last := len(handlers) - 1
-				onRemove = h.onRemove
 				copy(handlers[i:], handlers[i+1:])
-				handlers[last] = handlerEntry{}
+				handlers[last] = handler{}
 				c.handlers[command] = handlers[:last]
 				break
 			}
 		}
 		c.handlersMu.Unlock()
-		if onRemove != nil {
-			onRemove()
-		}
-	}
-}
-
-// registerTyped adapts a typed command and callback to the common handler list.
-func registerTyped[T any](c *Client, command Command[T], handler func(T, Message) error, opts ...HandlerOption) func() {
-	e := handlerEntry{
-		decode: func(msg Message) (any, error) {
-			return command.decode(msg)
-		},
-		invokeTyped: func(value any, msg Message) error {
-			return handler(value.(T), msg)
-		},
-	}
-	for _, option := range opts {
-		if option != nil {
-			option(&e)
-		}
-	}
-
-	return c.addHandler(command.id, e)
-}
-
-// ID returns the wire command ID associated with the specification.
-func (command Command[T]) ID() uint16 { return command.id }
-
-// Subscribe creates a buffered channel subscription for the command. A full
-// channel drops the newest result rather than blocking message dispatch; use
-// Dropped to monitor those losses. Pass zero for an unbuffered channel.
-func (command Command[T]) Subscribe(client *Client, buffer int) (*Subscription[T], error) {
-	if client == nil {
-		return nil, fmt.Errorf("cannot subscribe to command %d on a nil client", command.id)
-	}
-	if command.decode == nil {
-		return nil, fmt.Errorf("command %d has no decoder", command.id)
-	}
-	if buffer < 0 {
-		return nil, fmt.Errorf("subscription buffer cannot be negative: %d", buffer)
-	}
-
-	state := &subscriptionState[T]{ch: make(chan MessageResult[T], buffer)}
-	entry := handlerEntry{
-		onRemove: state.close,
-		decode: func(msg Message) (any, error) {
-			return command.decode(msg)
-		},
-		invokeTyped: func(value any, msg Message) error {
-			state.offer(MessageResult[T]{Value: value.(T), Message: msg})
-			return nil
-		},
-		onDecodeErr: func(err error, msg Message) {
-			state.offer(MessageResult[T]{Message: msg, Err: err})
-		},
-	}
-
-	remove := client.addHandler(command.id, entry)
-	subscription := &Subscription[T]{C: state.ch, state: state}
-	subscription.cancel = func() {
-		remove()
-		state.close()
-	}
-	return subscription, nil
-}
-
-// OnAny registers a handler that is called for every received message,
-// regardless of command ID. Use [WithErrorHandler] to route errors from
-// this handler to a dedicated callback instead of the global error channel.
-// Returns a function that, when called, removes the handler.
-func (c *Client) OnAny(handler MessageHandler, opts ...HandlerOption) func() {
-	c.handlersMu.Lock()
-	defer c.handlersMu.Unlock()
-
-	c.nextHandlerID++
-	id := c.nextHandlerID
-
-	e := handlerEntry{id: id, fn: handler}
-	for _, o := range opts {
-		if o != nil {
-			o(&e)
-		}
-	}
-
-	c.onAny = append(c.onAny, e)
-
-	return func() {
-		c.handlersMu.Lock()
-		defer c.handlersMu.Unlock()
-		for i, h := range c.onAny {
-			if h.id == id {
-				last := len(c.onAny) - 1
-				copy(c.onAny[i:], c.onAny[i+1:])
-				c.onAny[last] = handlerEntry{}
-				c.onAny = c.onAny[:last]
-				break
-			}
-		}
 	}
 }
 
@@ -435,8 +235,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.mu.RUnlock()
 
-	//conn, _, err := c.cfg.Dialer.DialContext(ctx, c.cfg.URL, c.cfg.RequestHeader)
-	conn, _, err := websocket.DefaultDialer.Dial(c.cfg.URL, c.cfg.RequestHeader)
+	conn, _, err := c.cfg.Dialer.DialContext(ctx, c.cfg.URL, c.cfg.RequestHeader)
 	if err != nil {
 		return err
 	}
@@ -543,34 +342,7 @@ func (c *Client) Close() error {
 	close(c.closeCh)
 	c.mu.Unlock()
 
-	c.closeSubscriptions()
 	return c.closeConn()
-}
-
-func (c *Client) closeSubscriptions() {
-	c.handlersMu.Lock()
-	var closeFns []func()
-	for command, handlers := range c.handlers {
-		write := 0
-		originalLen := len(handlers)
-		for _, handler := range handlers {
-			if handler.onRemove != nil {
-				closeFns = append(closeFns, handler.onRemove)
-				continue
-			}
-			handlers[write] = handler
-			write++
-		}
-		for i := write; i < originalLen; i++ {
-			handlers[i] = handlerEntry{}
-		}
-		c.handlers[command] = handlers[:write]
-	}
-	c.handlersMu.Unlock()
-
-	for _, closeFn := range closeFns {
-		closeFn()
-	}
 }
 
 var i int
@@ -626,6 +398,7 @@ func (c *Client) readLoop(ctx context.Context) error {
 			if err := c.handlePingAck(msg); err != nil {
 				c.publishError(fmt.Errorf("ping ack error: %w", err))
 			}
+			continue
 		}
 
 		st := time.Now()
@@ -640,47 +413,31 @@ func (c *Client) readLoop(ctx context.Context) error {
 
 func (c *Client) dispatch(msg Message) {
 	c.handlersMu.RLock()
-	handlers := append([]handlerEntry{}, c.handlers[msg.Command]...)
-	onAny := append([]handlerEntry{}, c.onAny...)
+	handlers := c.handlers[msg.Command]
 	c.handlersMu.RUnlock()
 
-	var decoded bool
-	var decodedValue any
-	var decodeErr error
-	for _, h := range handlers {
-		var err error
-		if h.decode == nil {
-			err = h.fn(msg)
-		} else {
-			if !decoded {
-				decodedValue, decodeErr = h.decode(msg)
-				decoded = true
-			}
-			if decodeErr != nil {
-				if h.onDecodeErr != nil {
-					h.onDecodeErr(decodeErr, msg)
-				} else {
-					err = decodeErr
-				}
-			} else {
-				err = h.invokeTyped(decodedValue, msg)
-			}
-		}
-		if err != nil {
-			if h.onError != nil {
-				h.onError(err)
-			} else {
-				c.publishError(err)
-			}
-		}
+	if len(handlers) == 0 {
+		return
 	}
 
-	for _, h := range onAny {
-		if err := h.fn(msg); err != nil {
-			if h.onError != nil {
-				h.onError(err)
-			} else {
-				c.publishError(err)
+	decoderFn := decoders[msg.Command]
+	if decoderFn == nil {
+		c.publishError(fmt.Errorf("no decoder for command %d", msg.Command))
+		return
+	}
+
+	decodedValue, err := decoderFn(msg)
+	result := Result{Value: decodedValue, Err: err}
+
+	for _, h := range handlers {
+		if h.fn != nil {
+			h.fn(result)
+		}
+		if h.ch != nil {
+			select {
+			case h.ch <- result:
+			default:
+				c.publishError(fmt.Errorf("handler channel for command %d is full, dropping message", msg.Command))
 			}
 		}
 	}
@@ -743,11 +500,6 @@ func (c *Client) publishError(err error) {
 	if c.cfg.OnError != nil {
 		c.cfg.OnError(err)
 	}
-
-	//select {
-	//case c.errCh <- err:
-	//default:
-	//}
 }
 
 // auth funcs
@@ -779,21 +531,23 @@ func (c *Client) SetSessionKey(key []byte) error {
 	return c.cfg.Crypto.SetKey(key)
 }
 
-func (c *Client) handleSessionKeyMessage(msg Message) error {
+func (c *Client) handleSessionKeyMessage(result Result) {
+	msg := result.Value.(Message)
 	keyBytes, err := c.extractSessionKey(msg)
 	if err != nil {
-		return err
+		c.publishError(fmt.Errorf("failed to extract session key: %w", err))
+		return
 	}
 
 	if err := c.SetSessionKey(keyBytes); err != nil {
-		return fmt.Errorf("failed to set session key: %w", err)
+		c.publishError(fmt.Errorf("failed to set session key: %w", err))
+		return
 	}
 
 	if err := c.Login(); err != nil {
-		return fmt.Errorf("failed to send login after key load: %w", err)
+		c.publishError(fmt.Errorf("failed to send login after key load: %w", err))
+		return
 	}
-
-	return nil
 }
 
 func (c *Client) extractSessionKey(msg Message) ([]byte, error) {
@@ -834,35 +588,35 @@ func (c *Client) Login() error {
 	return nil
 }
 
-func (c *Client) handleLoginAck(msg Message) error {
+func (c *Client) handleLoginAck(result Result) {
+	msg := result.Value.(Message)
 	if msg.Code != 0 {
-		return &ServerError{
+		c.publishError(&ServerError{
 			Command: msg.Command,
 			Code:    msg.Code,
 			Msg:     "login rejected",
-		}
+		})
+		return
 	}
 
 	c.mu.Lock()
 	c.authenticated = true
 	c.mu.Unlock()
-	return nil
 }
 
-func (c *Client) handleLoginSuccess(msg Message) error {
+func (c *Client) handleLoginSuccess(result Result) {
+	msg := result.Value.(Message)
 	if msg.Code != 0 {
-		return &ServerError{
+		c.publishError(&ServerError{
 			Command: msg.Command,
 			Code:    msg.Code,
 			Msg:     "login success command failed",
-		}
+		})
 	}
 
 	c.mu.Lock()
 	c.authenticated = true
 	c.mu.Unlock()
-
-	return nil
 }
 
 func (c *Client) waitUntilAuthenticated() error {
