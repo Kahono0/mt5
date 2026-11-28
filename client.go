@@ -207,6 +207,7 @@ func New(config Config) (*Client, error) {
 		//msgCh:    make(chan Message, config.MessageBuffer),
 		//errCh:    make(chan error, config.ErrorBuffer),
 
+		pingAckCh: make(chan struct{}, 1),
 	}
 
 	c.On(CommandRequestSessionKey, c.handleSessionKeyMessage)
@@ -216,17 +217,6 @@ func New(config Config) (*Client, error) {
 
 	return c, nil
 }
-
-//// Messages returns a read-only channel of dispatched messages.
-//func (c *Client) Messages() <-chan Message {
-//	return c.msgCh
-//}
-//
-//// Errors returns a read-only channel of non-fatal errors encountered
-//// during operation.
-//func (c *Client) Errors() <-chan error {
-//	return c.errCh
-//}
 
 // On registers a handler for a specific command ID. Multiple handlers
 // can be registered for the same command. Use [WithErrorHandler] to
@@ -335,9 +325,8 @@ func (c *Client) Run(ctx context.Context) error {
 	connectedOnce := false
 
 	for {
-		log.Printf("Attempting to connect (attempt %d)", attempt+1)
 		if err := c.Connect(ctx); err != nil {
-			log.Printf("Connection error: %v", err)
+			c.publishError(fmt.Errorf("connect error: %w", err))
 			if !c.shouldRetry(attempt, err) {
 				return err
 			}
@@ -367,14 +356,15 @@ func (c *Client) Run(ctx context.Context) error {
 		connectedOnce = true
 		attempt = 0
 
-		c.mu.Lock()
-		c.authenticated = false
-		c.mu.Unlock()
+		heartbeatDone := make(chan struct{})
+
+		go c.heartbeatLoop(heartbeatDone)
 
 		err := c.readLoop(ctx)
 		if err != nil && c.cfg.OnDisconnect != nil {
 			c.cfg.OnDisconnect(c, err)
 		}
+		close(heartbeatDone)
 		_ = c.closeConn()
 
 		if err == nil {
@@ -384,6 +374,10 @@ func (c *Client) Run(ctx context.Context) error {
 		if !c.shouldRetry(attempt, err) {
 			return err
 		}
+
+		c.mu.Lock()
+		c.authenticated = false
+		c.mu.Unlock()
 
 		c.cfg.Crypto.ResetKey() // Reset the encryption key on disconnect to ensure a fresh key is requested on reconnect.
 
@@ -408,75 +402,6 @@ func (c *Client) Close() error {
 	return c.closeConn()
 }
 
-// SendCommand encrypts and sends a command with the given body.
-func (c *Client) SendCommand(command uint16, body []byte) error {
-	log.Printf("Sending command=%d body=%d", command, len(body))
-	frame, err := c.prepareMessage(command, body)
-	if err != nil {
-		return err
-	}
-
-	return c.Send(frame)
-}
-
-func (c *Client) prepareMessage(command uint16, body []byte) ([]byte, error) {
-	payload, err := c.cfg.Codec.EncodeCommand(command, body)
-	if err != nil {
-		return nil, err
-	}
-
-	cipherText, err := c.cfg.Crypto.Encrypt(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	frame, err := c.cfg.Codec.Pack(cipherText)
-	if err != nil {
-		return nil, err
-	}
-
-	return frame, nil
-}
-
-// Send writes a raw framed message to the WebSocket connection.
-func (c *Client) Send(frame []byte) error {
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return ErrClientClosed
-	}
-	conn := c.conn
-	c.mu.RUnlock()
-
-	if conn == nil {
-		return ErrNotConnected
-	}
-
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	return conn.WriteMessage(websocket.BinaryMessage, frame)
-}
-
-func (c *Client) SendWithDeadline(frame []byte, deadline time.Time) error {
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return ErrClientClosed
-	}
-	conn := c.conn
-	c.mu.RUnlock()
-
-	if conn == nil {
-		return ErrNotConnected
-	}
-
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	conn.SetWriteDeadline(deadline)
-	return conn.WriteMessage(websocket.BinaryMessage, frame)
-}
-
 func (c *Client) readLoop(ctx context.Context) error {
 	for {
 		select {
@@ -494,10 +419,10 @@ func (c *Client) readLoop(ctx context.Context) error {
 			return ErrNotConnected
 		}
 
+		conn.SetReadDeadline(time.Now().Add(c.cfg.PingTimeout))
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("read error: %v", err)
-			c.publishError(ErrReadError)
+			c.publishError(fmt.Errorf("read error: %w", err))
 			return ErrReadError
 		}
 
@@ -732,28 +657,24 @@ func (c *Client) handleLoginSuccess(msg Message) error {
 	c.authenticated = true
 	c.mu.Unlock()
 
-	c.onAuthenticated()
 	return nil
 }
 
-// onAuthenticated is called after the client has successfully completed the login handshake.
-func (c *Client) onAuthenticated() {
-	c.startHeartbeatLoop()
-}
+func (c *Client) waitUntilAuthenticated() error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
-func (c *Client) startHeartbeatLoop() {
-	// close heartbeat chans if they are not already closed and create new ones
-	// start heartbeat loop
-	c.mu.Lock()
-	if c.pingAckCh == nil {
-		c.pingAckCh = make(chan struct{}, 1)
-	}
-	if c.heartbeatDone == nil {
-		c.heartbeatDone = make(chan struct{})
-	}
-	c.mu.Unlock()
+	for range ticker.C {
+		c.mu.RLock()
+		auth := c.authenticated
+		c.mu.RUnlock()
 
-	go c.heartbeatLoop()
+		if auth {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("client not authenticated")
 }
 
 // IsAuthenticated reports whether the client has completed the login
@@ -777,13 +698,21 @@ func (c *Client) handlePingAck(msg Message) error {
 	return nil
 }
 
-var pLast = time.Now()
+var (
+	ErrPreparePingMessage = fmt.Errorf("failed to prepare ping message")
+	ErrSendPing           = fmt.Errorf("failed to send ping message")
+	ErrPingTimeout        = fmt.Errorf("ping timeout")
+)
 
 // heartbeatLoop sends periodic ping commands and checks for acknowledgments.
-func (c *Client) heartbeatLoop() {
+func (c *Client) heartbeatLoop(done chan struct{}) {
+	if err := c.waitUntilAuthenticated(); err != nil {
+		c.publishError(fmt.Errorf("heartbeat loop: %w", err))
+		return
+	}
 	frame, err := c.prepareMessage(CommandPing, nil)
 	if err != nil {
-		c.publishError(fmt.Errorf("failed to prepare ping message: %w", err))
+		c.publishError(ErrPreparePingMessage)
 		return
 	}
 
@@ -792,24 +721,65 @@ func (c *Client) heartbeatLoop() {
 
 	for {
 		select {
+		case <-done:
+			return
 		case <-timer.C:
-			log.Printf("Sending heartbeat ping after %s", time.Since(pLast))
 			if err := c.Send(frame); err != nil {
-				c.publishError(fmt.Errorf("send heartbeat ping: %w", err))
+				c.publishError(fmt.Errorf("%w: %v", ErrSendPing, err))
 				return
 			}
-			pLast = time.Now()
 		case <-c.pingAckCh:
-			log.Printf("Received heartbeat ping ack after %s", time.Since(pLast))
 			timer.Reset(c.cfg.PingInterval)
 			continue
-		case <-time.After(c.cfg.PingTimeout):
-			c.publishError(fmt.Errorf("heartbeat ping timeout after %s", c.cfg.PingTimeout))
-			return
-		case <-c.heartbeatDone:
-			log.Printf("Heartbeat loop exiting")
-			return
 		}
 
 	}
+}
+
+// SendCommand encrypts and sends a command with the given body.
+func (c *Client) SendCommand(command uint16, body []byte) error {
+	frame, err := c.prepareMessage(command, body)
+	if err != nil {
+		return err
+	}
+
+	return c.Send(frame)
+}
+
+func (c *Client) prepareMessage(command uint16, body []byte) ([]byte, error) {
+	payload, err := c.cfg.Codec.EncodeCommand(command, body)
+	if err != nil {
+		return nil, err
+	}
+
+	cipherText, err := c.cfg.Crypto.Encrypt(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	frame, err := c.cfg.Codec.Pack(cipherText)
+	if err != nil {
+		return nil, err
+	}
+
+	return frame, nil
+}
+
+// Send writes a raw framed message to the WebSocket connection.
+func (c *Client) Send(frame []byte) error {
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return ErrClientClosed
+	}
+	conn := c.conn
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return ErrNotConnected
+	}
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return conn.WriteMessage(websocket.BinaryMessage, frame)
 }
