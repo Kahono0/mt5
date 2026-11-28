@@ -23,20 +23,26 @@ func (c *AppClient) RequestOpenPositions() error {
 
 type PositionsHandler func(positions []*Position)
 
+// RegisterPositionsHandler registers a callback for decoded positions.
+// Typed handlers for this command share one positions slice per message;
+// treat the slice and its entries as read-only.
 func (c *AppClient) RegisterPositionsHandler(handler PositionsHandler, opts ...HandlerOption) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandRequestPositions, func(msg Message) error {
-		positions, err := models.ParsePositionsFromBytes(msg.Body)
-		if err != nil {
-			return fmt.Errorf("failed to decode positions: %w", err)
-		}
-
+	return registerTyped(c.core, positionsCommand, func(positions []*Position, _ Message) error {
 		handler(positions)
 		return nil
 	}, opts...)
+}
+
+func decodePositionsMessage(msg Message) ([]*Position, error) {
+	positions, err := models.ParsePositionsFromBytes(msg.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode positions: %w", err)
+	}
+	return positions, nil
 }
 
 func (c *AppClient) GetOpenPositions(ctx context.Context) ([]*Position, error) {

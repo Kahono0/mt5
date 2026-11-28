@@ -3,7 +3,6 @@ package mt5
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -106,9 +105,11 @@ type Config struct {
 // handlerEntry pairs a message handler with an optional per-handler
 // error callback.
 type handlerEntry struct {
-	id      uint64
-	fn      MessageHandler
-	onError func(error)
+	id          uint64
+	fn          MessageHandler
+	decode      func(Message) (any, error)
+	invokeTyped func(any, Message) error
+	onError     func(error)
 }
 
 // HandlerOption configures how a registered handler behaves.
@@ -213,7 +214,6 @@ func New(config Config) (*Client, error) {
 	c.On(CommandRequestSessionKey, c.handleSessionKeyMessage)
 	c.On(CommandLogin, c.handleLoginAck)
 	c.On(CommandLoginSuccess, c.handleLoginSuccess)
-	c.On(CommandPing, c.handlePingAck)
 
 	return c, nil
 }
@@ -224,30 +224,55 @@ func New(config Config) (*Client, error) {
 // the global error channel. Returns a function that, when called,
 // removes the handler.
 func (c *Client) On(command uint16, handler MessageHandler, opts ...HandlerOption) func() {
-	c.handlersMu.Lock()
-	defer c.handlersMu.Unlock()
-
-	c.nextHandlerID++
-	id := c.nextHandlerID
-
-	e := handlerEntry{id: id, fn: handler}
+	e := handlerEntry{fn: handler}
 	for _, o := range opts {
-		o(&e)
+		if o != nil {
+			o(&e)
+		}
 	}
+	return c.addHandler(command, e)
+}
 
+func (c *Client) addHandler(command uint16, e handlerEntry) func() {
+	c.handlersMu.Lock()
+	c.nextHandlerID++
+	e.id = c.nextHandlerID
 	c.handlers[command] = append(c.handlers[command], e)
+	c.handlersMu.Unlock()
 
 	return func() {
 		c.handlersMu.Lock()
 		defer c.handlersMu.Unlock()
 		handlers := c.handlers[command]
 		for i, h := range handlers {
-			if h.id == id {
-				c.handlers[command] = append(handlers[:i], handlers[i+1:]...)
+			if h.id == e.id {
+				last := len(handlers) - 1
+				copy(handlers[i:], handlers[i+1:])
+				handlers[last] = handlerEntry{}
+				c.handlers[command] = handlers[:last]
 				break
 			}
 		}
 	}
+}
+
+// registerTyped adapts a typed command and callback to the common handler list.
+func registerTyped[T any](c *Client, command typedCommand[T], handler func(T, Message) error, opts ...HandlerOption) func() {
+	e := handlerEntry{
+		decode: func(msg Message) (any, error) {
+			return command.decode(msg)
+		},
+		invokeTyped: func(value any, msg Message) error {
+			return handler(value.(T), msg)
+		},
+	}
+	for _, option := range opts {
+		if option != nil {
+			option(&e)
+		}
+	}
+
+	return c.addHandler(command.id, e)
 }
 
 // OnAny registers a handler that is called for every received message,
@@ -263,7 +288,9 @@ func (c *Client) OnAny(handler MessageHandler, opts ...HandlerOption) func() {
 
 	e := handlerEntry{id: id, fn: handler}
 	for _, o := range opts {
-		o(&e)
+		if o != nil {
+			o(&e)
+		}
 	}
 
 	c.onAny = append(c.onAny, e)
@@ -273,7 +300,10 @@ func (c *Client) OnAny(handler MessageHandler, opts ...HandlerOption) func() {
 		defer c.handlersMu.Unlock()
 		for i, h := range c.onAny {
 			if h.id == id {
-				c.onAny = append(c.onAny[:i], c.onAny[i+1:]...)
+				last := len(c.onAny) - 1
+				copy(c.onAny[i:], c.onAny[i+1:])
+				c.onAny[last] = handlerEntry{}
+				c.onAny = c.onAny[:last]
 				break
 			}
 		}
@@ -402,6 +432,9 @@ func (c *Client) Close() error {
 	return c.closeConn()
 }
 
+var i int
+var tt time.Duration
+
 func (c *Client) readLoop(ctx context.Context) error {
 	for {
 		select {
@@ -448,7 +481,11 @@ func (c *Client) readLoop(ctx context.Context) error {
 			continue
 		}
 
-		log.Printf("Received message: command=%d code=%d body=%d", msg.Command, msg.Code, len(msg.Body))
+		if msg.Command == CommandPing {
+			if err := c.handlePingAck(msg); err != nil {
+				c.publishError(fmt.Errorf("ping ack error: %w", err))
+			}
+		}
 
 		c.dispatch(msg)
 	}
@@ -460,8 +497,25 @@ func (c *Client) dispatch(msg Message) {
 	onAny := append([]handlerEntry{}, c.onAny...)
 	c.handlersMu.RUnlock()
 
+	var decoded bool
+	var decodedValue any
+	var decodeErr error
 	for _, h := range handlers {
-		if err := h.fn(msg); err != nil {
+		var err error
+		if h.decode == nil {
+			err = h.fn(msg)
+		} else {
+			if !decoded {
+				decodedValue, decodeErr = h.decode(msg)
+				decoded = true
+			}
+			if decodeErr != nil {
+				err = decodeErr
+			} else {
+				err = h.invokeTyped(decodedValue, msg)
+			}
+		}
+		if err != nil {
 			if h.onError != nil {
 				h.onError(err)
 			} else {

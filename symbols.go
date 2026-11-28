@@ -42,7 +42,8 @@ func (c *AppClient) QuerySymbols() error {
 // RegisterQuerySymbolsHandler registers a handler that receives decoded
 // symbol data. Use [WithErrorHandler] to route errors from this handler
 // to a dedicated callback. Returns a function that, when called, removes
-// the handler.
+// the handler. Typed handlers for this command share one symbol list per
+// message; treat it and its Symbols slice as read-only.
 func (c *AppClient) RegisterQuerySymbolsHandler(
 	handler QuerySymbolsHandler,
 	opts ...HandlerOption,
@@ -51,11 +52,7 @@ func (c *AppClient) RegisterQuerySymbolsHandler(
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandQuerySymbols, func(msg Message) error {
-		info, err := DecodeSymbols(msg)
-		if err != nil {
-			return err
-		}
+	return registerTyped(c.core, querySymbolsCommand, func(info *SymbolList, msg Message) error {
 		handler(info, msg)
 		return nil
 	}, opts...)

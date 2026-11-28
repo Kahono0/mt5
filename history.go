@@ -13,20 +13,26 @@ type TradeHistory = models.TradeHistory
 
 type TradeHistoryHandler func(history *TradeHistory)
 
+// RegisterTradeHistoryHandler registers a callback for decoded trade history.
+// Typed handlers for this command share one history value per message; treat
+// it and its nested slices as read-only.
 func (c *AppClient) RegisterTradeHistoryHandler(handler TradeHistoryHandler, opts ...HandlerOption) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandLoadHistory, func(msg Message) error {
-		history := &TradeHistory{}
-		if err := history.ParseFromBytes(msg.Body); err != nil {
-			return fmt.Errorf("failed to parse trade history: %w", err)
-		}
-
+	return registerTyped(c.core, tradeHistoryCommand, func(history *TradeHistory, _ Message) error {
 		handler(history)
 		return nil
 	}, opts...)
+}
+
+func decodeTradeHistoryMessage(msg Message) (*TradeHistory, error) {
+	history := &TradeHistory{}
+	if err := history.ParseFromBytes(msg.Body); err != nil {
+		return nil, fmt.Errorf("failed to parse trade history: %w", err)
+	}
+	return history, nil
 }
 
 // RequestTradeHistory sends a request for trade history between the

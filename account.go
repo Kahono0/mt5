@@ -62,20 +62,21 @@ func (c *AppClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error) {
 // RegisterAccountInfoHandler registers a handler that receives decoded
 // account information. Use [WithErrorHandler] to route errors from this
 // handler to a dedicated callback. Returns a function that, when called,
-// removes the handler.
+// removes the handler. Typed handlers for this command share one decoded
+// account value per message; treat it as read-only.
 func (c *AppClient) RegisterAccountInfoHandler(handler AccountInfoHandler, opts ...HandlerOption) func() {
 	if handler == nil {
 		return func() {}
 	}
 
-	return c.RegisterHandler(CommandRequestAccountInfo, func(msg Message) error {
-		info := &models.AccountInfo{}
-		if err := info.ParseFromBytes(msg.Body); err != nil {
-			return fmt.Errorf("failed to parse account info: %w", err)
-		}
+	return registerTyped(c.core, accountInfoCommand, func(info *AccountInfo, msg Message) error {
 		handler(info, msg)
 		return nil
 	}, opts...)
+}
+
+func decodeAccountInfoMessage(msg Message) (*AccountInfo, error) {
+	return parseAccountInfo(msg.Body)
 }
 
 func parseAccountInfo(data []byte) (*AccountInfo, error) {
