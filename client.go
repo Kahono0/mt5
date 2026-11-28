@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -109,7 +110,74 @@ type handlerEntry struct {
 	fn          MessageHandler
 	decode      func(Message) (any, error)
 	invokeTyped func(any, Message) error
+	onDecodeErr func(error, Message)
 	onError     func(error)
+	onRemove    func()
+}
+
+// MessageResult contains either a decoded value or the error from decoding a
+// message for a typed subscription.
+type MessageResult[T any] struct {
+	Value   T
+	Message Message
+	Err     error
+}
+
+// Subscription receives decoded messages for one typed command. Each
+// subscription has its own channel, but decoded values are shared with other
+// handlers and subscriptions for that message and should be treated as
+// read-only. When its buffer is full, new messages are dropped and counted by
+// Dropped. Call Cancel to close the channel.
+type Subscription[T any] struct {
+	C      <-chan MessageResult[T]
+	state  *subscriptionState[T]
+	cancel func()
+}
+
+// Cancel unregisters the subscription and closes its channel. It is safe to
+// call more than once.
+func (s *Subscription[T]) Cancel() {
+	if s != nil && s.cancel != nil {
+		s.cancel()
+	}
+}
+
+// Dropped returns the number of messages discarded because the channel buffer
+// was full.
+func (s *Subscription[T]) Dropped() uint64 {
+	if s == nil || s.state == nil {
+		return 0
+	}
+	return s.state.dropped.Load()
+}
+
+type subscriptionState[T any] struct {
+	mu      sync.Mutex
+	ch      chan MessageResult[T]
+	closed  bool
+	dropped atomic.Uint64
+}
+
+func (s *subscriptionState[T]) offer(result MessageResult[T]) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.ch <- result:
+	default:
+		s.dropped.Add(1)
+	}
+}
+
+func (s *subscriptionState[T]) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.closed = true
+		close(s.ch)
+	}
 }
 
 // HandlerOption configures how a registered handler behaves.
@@ -242,22 +310,27 @@ func (c *Client) addHandler(command uint16, e handlerEntry) func() {
 
 	return func() {
 		c.handlersMu.Lock()
-		defer c.handlersMu.Unlock()
 		handlers := c.handlers[command]
+		var onRemove func()
 		for i, h := range handlers {
 			if h.id == e.id {
 				last := len(handlers) - 1
+				onRemove = h.onRemove
 				copy(handlers[i:], handlers[i+1:])
 				handlers[last] = handlerEntry{}
 				c.handlers[command] = handlers[:last]
 				break
 			}
 		}
+		c.handlersMu.Unlock()
+		if onRemove != nil {
+			onRemove()
+		}
 	}
 }
 
 // registerTyped adapts a typed command and callback to the common handler list.
-func registerTyped[T any](c *Client, command typedCommand[T], handler func(T, Message) error, opts ...HandlerOption) func() {
+func registerTyped[T any](c *Client, command Command[T], handler func(T, Message) error, opts ...HandlerOption) func() {
 	e := handlerEntry{
 		decode: func(msg Message) (any, error) {
 			return command.decode(msg)
@@ -273,6 +346,47 @@ func registerTyped[T any](c *Client, command typedCommand[T], handler func(T, Me
 	}
 
 	return c.addHandler(command.id, e)
+}
+
+// ID returns the wire command ID associated with the specification.
+func (command Command[T]) ID() uint16 { return command.id }
+
+// Subscribe creates a buffered channel subscription for the command. A full
+// channel drops the newest result rather than blocking message dispatch; use
+// Dropped to monitor those losses. Pass zero for an unbuffered channel.
+func (command Command[T]) Subscribe(client *Client, buffer int) (*Subscription[T], error) {
+	if client == nil {
+		return nil, fmt.Errorf("cannot subscribe to command %d on a nil client", command.id)
+	}
+	if command.decode == nil {
+		return nil, fmt.Errorf("command %d has no decoder", command.id)
+	}
+	if buffer < 0 {
+		return nil, fmt.Errorf("subscription buffer cannot be negative: %d", buffer)
+	}
+
+	state := &subscriptionState[T]{ch: make(chan MessageResult[T], buffer)}
+	entry := handlerEntry{
+		onRemove: state.close,
+		decode: func(msg Message) (any, error) {
+			return command.decode(msg)
+		},
+		invokeTyped: func(value any, msg Message) error {
+			state.offer(MessageResult[T]{Value: value.(T), Message: msg})
+			return nil
+		},
+		onDecodeErr: func(err error, msg Message) {
+			state.offer(MessageResult[T]{Message: msg, Err: err})
+		},
+	}
+
+	remove := client.addHandler(command.id, entry)
+	subscription := &Subscription[T]{C: state.ch, state: state}
+	subscription.cancel = func() {
+		remove()
+		state.close()
+	}
+	return subscription, nil
 }
 
 // OnAny registers a handler that is called for every received message,
@@ -429,7 +543,34 @@ func (c *Client) Close() error {
 	close(c.closeCh)
 	c.mu.Unlock()
 
+	c.closeSubscriptions()
 	return c.closeConn()
+}
+
+func (c *Client) closeSubscriptions() {
+	c.handlersMu.Lock()
+	var closeFns []func()
+	for command, handlers := range c.handlers {
+		write := 0
+		originalLen := len(handlers)
+		for _, handler := range handlers {
+			if handler.onRemove != nil {
+				closeFns = append(closeFns, handler.onRemove)
+				continue
+			}
+			handlers[write] = handler
+			write++
+		}
+		for i := write; i < originalLen; i++ {
+			handlers[i] = handlerEntry{}
+		}
+		c.handlers[command] = handlers[:write]
+	}
+	c.handlersMu.Unlock()
+
+	for _, closeFn := range closeFns {
+		closeFn()
+	}
 }
 
 var i int
@@ -487,7 +628,13 @@ func (c *Client) readLoop(ctx context.Context) error {
 			}
 		}
 
+		st := time.Now()
 		c.dispatch(msg)
+		tt += time.Since(st)
+		i++
+		if i%100 == 0 {
+			fmt.Printf("avg dispatch time: %v\n", tt/time.Duration(i))
+		}
 	}
 }
 
@@ -510,7 +657,11 @@ func (c *Client) dispatch(msg Message) {
 				decoded = true
 			}
 			if decodeErr != nil {
-				err = decodeErr
+				if h.onDecodeErr != nil {
+					h.onDecodeErr(decodeErr, msg)
+				} else {
+					err = decodeErr
+				}
 			} else {
 				err = h.invokeTyped(decodedValue, msg)
 			}
