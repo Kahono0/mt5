@@ -61,6 +61,33 @@ func (c *AppClient) RegisterQuerySymbolsHandler(
 	}, opts...)
 }
 
+func (c *AppClient) GetSymbols() (*SymbolList, error) {
+	if !c.IsAuthenticated() {
+		return nil, ErrNotAuthenticated
+	}
+
+	type result struct {
+		symbols *SymbolList
+		err     error
+	}
+
+	ch := make(chan result, 1)
+
+	unregister := c.RegisterQuerySymbolsHandler(func(symbols *SymbolList, msg Message) {
+		ch <- result{symbols: symbols}
+	}, WithErrorHandler(func(err error) {
+		ch <- result{err: err}
+	}))
+	defer unregister()
+
+	if err := c.QuerySymbols(); err != nil {
+		return nil, err
+	}
+
+	res := <-ch
+	return res.symbols, res.err
+}
+
 func DecodeSymbols(msg Message) (*SymbolList, error) {
 	if msg.Command != CommandQuerySymbols {
 		return nil, &CommandMismatchError{Expected: CommandQuerySymbols, Got: msg.Command}
